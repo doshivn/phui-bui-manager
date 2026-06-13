@@ -1,0 +1,1381 @@
+// Application Logic for Shoe Spa Manager
+
+// 1. STATE & STORAGE MANAGEMENT
+const state = {
+  currentUser: null,
+  orders: [],
+  services: [],
+  users: [],
+  activeView: 'login',
+  currentEditingOrder: null,
+  currentEditingService: null,
+  currentEditingEmployee: null
+};
+
+// Initialize app data from Firebase Cloud or LocalStorage fallback
+async function initData() {
+  if (window.db) {
+    try {
+      console.log("Syncing database with Firebase Firestore Cloud...");
+      
+      // 1. Load users
+      const usersSnap = await window.db.collection('users').get();
+      if (usersSnap.empty) {
+        for (let u of window.DEFAULT_USERS || []) {
+          await window.db.collection('users').doc(u.id).set(u);
+        }
+        state.users = window.DEFAULT_USERS || [];
+      } else {
+        state.users = usersSnap.docs.map(doc => doc.data());
+      }
+      localStorage.setItem('pb_users', JSON.stringify(state.users));
+
+      // 2. Load services
+      const servicesSnap = await window.db.collection('services').get();
+      if (servicesSnap.empty) {
+        for (let s of window.DEFAULT_SERVICES || []) {
+          await window.db.collection('services').doc(s.id).set(s);
+        }
+        state.services = window.DEFAULT_SERVICES || [];
+      } else {
+        state.services = servicesSnap.docs.map(doc => doc.data());
+      }
+      localStorage.setItem('pb_services', JSON.stringify(state.services));
+
+      // 3. Load orders
+      const ordersSnap = await window.db.collection('orders').get();
+      if (ordersSnap.empty) {
+        for (let o of window.INITIAL_ORDERS || []) {
+          await window.db.collection('orders').doc(o.id).set(o);
+        }
+        state.orders = window.INITIAL_ORDERS || [];
+      } else {
+        state.orders = ordersSnap.docs.map(doc => doc.data());
+      }
+      localStorage.setItem('pb_orders', JSON.stringify(state.orders));
+      
+    } catch (error) {
+      console.error("Firebase sync failed, falling back to LocalStorage:", error);
+      loadFromLocalStorage();
+    }
+  } else {
+    loadFromLocalStorage();
+  }
+
+  // Ensure new mock paid order is loaded if state is already initialized
+  if (state.orders.length > 0 && !state.orders.some(o => o.id === 'PB-1004')) {
+    const pb1004 = (window.INITIAL_ORDERS || []).find(o => o.id === 'PB-1004');
+    if (pb1004) {
+      state.orders.push(pb1004);
+      saveState('pb_orders', state.orders);
+    }
+  }
+
+  // Check login state
+  const savedUser = localStorage.getItem('pb_current_user');
+  if (savedUser) {
+    state.currentUser = JSON.parse(savedUser);
+    if (state.currentUser.role === 'admin') {
+      switchView('dashboard');
+    } else {
+      switchView('orders');
+    }
+    updateProfileUI();
+  } else {
+    switchView('login');
+  }
+}
+
+// Fallback: local storage loader
+function loadFromLocalStorage() {
+  if (!localStorage.getItem('pb_users')) {
+    localStorage.setItem('pb_users', JSON.stringify(window.DEFAULT_USERS || []));
+  }
+  if (!localStorage.getItem('pb_services')) {
+    localStorage.setItem('pb_services', JSON.stringify(window.DEFAULT_SERVICES || []));
+  }
+  if (!localStorage.getItem('pb_orders')) {
+    localStorage.setItem('pb_orders', JSON.stringify(window.INITIAL_ORDERS || []));
+  }
+
+  state.users = JSON.parse(localStorage.getItem('pb_users'));
+  state.services = JSON.parse(localStorage.getItem('pb_services'));
+  state.orders = JSON.parse(localStorage.getItem('pb_orders'));
+}
+
+// Sync helper that updates LocalStorage instantly and uploads to Firebase asynchronously
+async function saveState(key, data) {
+  // Update local storage instantly for high responsiveness
+  localStorage.setItem(key, JSON.stringify(data));
+
+  // Sync to Firebase Cloud if initialized
+  if (window.db) {
+    let collectionName = '';
+    if (key === 'pb_orders') collectionName = 'orders';
+    else if (key === 'pb_services') collectionName = 'services';
+    else if (key === 'pb_users') collectionName = 'users';
+    
+    if (collectionName) {
+      try {
+        for (let item of data) {
+          await window.db.collection(collectionName).doc(item.id).set(item);
+        }
+        console.log(`Successfully synced ${collectionName} to Firebase Cloud.`);
+      } catch (error) {
+        console.error(`Firebase sync failed for ${collectionName}:`, error);
+      }
+    }
+  }
+}
+
+// 2. SPA ROUTER & NAVIGATION
+function switchView(viewId) {
+  // Access control
+  if (viewId !== 'login' && !state.currentUser) {
+    viewId = 'login';
+  }
+  
+  if (state.currentUser && state.currentUser.role !== 'admin' && ['dashboard', 'services', 'employees'].includes(viewId)) {
+    // Staff cannot access admin views
+    viewId = 'orders';
+  }
+
+  state.activeView = viewId;
+  
+  // Update UI active sections
+  document.querySelectorAll('.view-section').forEach(sec => {
+    sec.classList.remove('active');
+  });
+  
+  const targetSec = document.getElementById(`view-${viewId}`);
+  if (targetSec) targetSec.classList.add('active');
+
+  // Update Sidebar menu active class
+  document.querySelectorAll('.sidebar-menu li').forEach(li => {
+    li.classList.remove('active');
+    if (li.getAttribute('data-view') === viewId) {
+      li.classList.add('active');
+    }
+  });
+
+  // Handle specific view rendering
+  if (viewId === 'dashboard') {
+    renderDashboard();
+  } else if (viewId === 'orders') {
+    renderOrders();
+  } else if (viewId === 'customers') {
+    renderCustomers();
+  } else if (viewId === 'services') {
+    renderServicesList();
+  } else if (viewId === 'employees') {
+    renderEmployeesList();
+  }
+}
+
+// Update profile in sidebar
+function updateProfileUI() {
+  const profileContainer = document.getElementById('sidebar-profile');
+  if (state.currentUser) {
+    profileContainer.style.display = 'flex';
+    document.getElementById('profile-name').textContent = state.currentUser.name;
+    document.getElementById('profile-role').textContent = state.currentUser.role === 'admin' ? 'Quản trị viên' : 'Nhân viên';
+    document.getElementById('profile-initials').textContent = state.currentUser.name.split(' ').pop().substring(0, 2).toUpperCase();
+    
+    // Hide/Show Admin items in sidebar menu
+    const adminItems = document.querySelectorAll('.admin-only');
+    adminItems.forEach(item => {
+      item.style.display = state.currentUser.role === 'admin' ? 'block' : 'none';
+    });
+  } else {
+    profileContainer.style.display = 'none';
+  }
+}
+
+// 3. AUTHENTICATION FLOW
+function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errorMsg = document.getElementById('login-error-msg');
+
+  const user = state.users.find(u => u.email === email && u.password === password);
+  if (user) {
+    state.currentUser = user;
+    localStorage.setItem('pb_current_user', JSON.stringify(user));
+    errorMsg.style.display = 'none';
+    
+    // Reset login fields
+    document.getElementById('login-email').value = '';
+    document.getElementById('login-password').value = '';
+    
+    updateProfileUI();
+    
+    if (user.role === 'admin') {
+      switchView('dashboard');
+    } else {
+      switchView('orders');
+    }
+  } else {
+    errorMsg.style.display = 'block';
+    errorMsg.textContent = 'Email hoặc mật khẩu không đúng.';
+  }
+}
+
+function handleLogout() {
+  state.currentUser = null;
+  localStorage.removeItem('pb_current_user');
+  updateProfileUI();
+  switchView('login');
+}
+
+// Helper: Format currency
+function formatVND(amount) {
+  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+}
+
+// Helper: Format DateTime
+function formatDateTime(dateStr) {
+  if (!dateStr) return '-';
+  const d = new Date(dateStr);
+  return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+}
+
+// Helper: Date Matching Logic
+function isDateMatch(receivedDateStr, filterDate, filterMonth, filterYear) {
+  if (!receivedDateStr) return false;
+  const dateObj = new Date(receivedDateStr);
+  const year = dateObj.getFullYear();
+  const month = dateObj.getMonth() + 1; // 1-12
+  
+  // If specific date is selected (YYYY-MM-DD)
+  if (filterDate) {
+    const fDate = new Date(filterDate);
+    if (
+      dateObj.getDate() !== fDate.getDate() ||
+      dateObj.getMonth() !== fDate.getMonth() ||
+      dateObj.getFullYear() !== fDate.getFullYear()
+    ) {
+      return false;
+    }
+  }
+
+  // If specific month is selected (1-12)
+  if (filterMonth && filterMonth !== 'all') {
+    if (month !== parseInt(filterMonth)) return false;
+  }
+
+  // If specific year is selected
+  if (filterYear && filterYear !== 'all') {
+    if (year !== parseInt(filterYear)) return false;
+  }
+
+  return true;
+}
+
+// 4. ORDER MANAGEMENT
+function renderOrders() {
+  const searchTerm = document.getElementById('search-order').value.toLowerCase();
+  const statusFilter = document.getElementById('filter-status').value;
+  const filterDate = document.getElementById('filter-date').value;
+  const filterMonth = document.getElementById('filter-month').value;
+  const filterYear = document.getElementById('filter-year').value;
+  
+  const tbody = document.getElementById('orders-table-body');
+  tbody.innerHTML = '';
+
+  let filteredOrders = state.orders;
+
+  // Filter by search
+  if (searchTerm) {
+    filteredOrders = filteredOrders.filter(o => 
+      o.customerName.toLowerCase().includes(searchTerm) || 
+      o.customerPhone.includes(searchTerm) ||
+      o.id.toLowerCase().includes(searchTerm) ||
+      o.shoeInfo.toLowerCase().includes(searchTerm)
+    );
+  }
+
+  // Filter by status
+  if (statusFilter !== 'all') {
+    filteredOrders = filteredOrders.filter(o => o.status === statusFilter);
+  }
+
+  // Filter by day, month, year
+  filteredOrders = filteredOrders.filter(o => isDateMatch(o.receivedDate, filterDate, filterMonth, filterYear));
+
+  // Sort: newest first
+  filteredOrders.sort((a, b) => new Date(b.receivedDate) - new Date(a.receivedDate));
+
+  if (filteredOrders.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center" style="padding: 30px; color: var(--text-light);">Không tìm thấy đơn hàng nào</td></tr>`;
+    return;
+  }
+
+  filteredOrders.forEach(o => {
+    const tr = document.createElement('tr');
+    
+    // Status badge class
+    let statusText = 'Chờ xử lý';
+    let badgeClass = 'badge-pending';
+    switch (o.status) {
+      case 'pending': statusText = 'Chờ xử lý'; badgeClass = 'badge-pending'; break;
+      case 'processing': statusText = 'Đang tiến hành'; badgeClass = 'badge-processing'; break;
+      case 'completed': statusText = 'Đã hoàn thành'; badgeClass = 'badge-completed'; break;
+      case 'paid': statusText = 'Đã thanh toán'; badgeClass = 'badge-paid'; break;
+      case 'delivered': statusText = 'Đã giao khách'; badgeClass = 'badge-delivered'; break;
+      case 'cancelled': statusText = 'Đã hủy'; badgeClass = 'badge-cancelled'; break;
+    }
+
+    const servicesText = o.services.map(s => `${s.name}${s.quantity > 1 ? ` (x${s.quantity})` : ''}`).join(', ');
+
+    tr.innerHTML = `
+      <td style="font-weight: 700; color: var(--color-brand-brown-dark);">${o.id}</td>
+      <td>
+        <div>
+          <div style="font-weight: 600;">${o.customerName}</div>
+          <div style="font-size: 0.8rem; color: var(--text-secondary);">${o.customerPhone}</div>
+        </div>
+      </td>
+      <td>
+        <div style="font-weight: 600;">${o.shoeInfo}</div>
+        <div style="font-size: 0.8rem; color: var(--text-light); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 200px;">${servicesText}</div>
+      </td>
+      <td style="font-weight: 700; color: var(--color-brand-gold);">${formatVND(o.totalPrice)}</td>
+      <td style="font-size: 0.85rem; color: var(--text-secondary);">${formatDateTime(o.receivedDate)}</td>
+      <td><span class="badge ${badgeClass}">${statusText}</span></td>
+      <td>
+        <div class="action-buttons">
+          <button class="action-btn edit" onclick="viewOrderDetail('${o.id}')" title="Xem chi tiết & In hóa đơn">
+            <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+          </button>
+          <button class="action-btn edit" onclick="openOrderModal('${o.id}')" title="Chỉnh sửa đơn hàng">
+            <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          </button>
+          ${['pending', 'processing', 'completed'].includes(o.status) ? `
+            <button class="action-btn edit" onclick="quickPayOrderFromTable('${o.id}')" title="Thanh toán nhanh" style="color: var(--status-paid-text);">
+              <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.68v-1.92c-1.94-.28-3.57-1.49-3.73-3.48h2.09c.12.96.99 1.54 1.64 1.54.91 0 1.62-.51 1.62-1.39 0-1-.61-1.36-2.09-1.84-1.98-.64-3.58-1.47-3.58-3.69 0-1.82 1.39-3.13 3.32-3.44V4h2.68v1.9c1.62.24 3.01 1.34 3.26 3.19h-2.06c-.22-.84-.81-1.33-1.55-1.33-.86 0-1.42.49-1.42 1.15 0 .84.58 1.19 1.99 1.69 2.11.75 3.68 1.56 3.68 3.82 0 1.91-1.41 3.23-3.67 3.51z" fill="currentColor"/></svg>
+            </button>
+          ` : ''}
+          ${state.currentUser.role === 'admin' ? `
+            <button class="action-btn delete" onclick="deleteOrder('${o.id}')" title="Xóa đơn hàng">
+              <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
+          ` : ''}
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// Load services into form checklist
+function populateServiceSelector(selectedServices = []) {
+  const container = document.getElementById('form-services-selector');
+  container.innerHTML = '';
+
+  state.services.forEach(s => {
+    const existingSelect = selectedServices.find(selected => selected.id === s.id);
+    const isChecked = !!existingSelect;
+    const quantity = existingSelect ? (existingSelect.quantity || 1) : 1;
+
+    const div = document.createElement('div');
+    div.className = `service-select-item ${isChecked ? 'selected' : ''}`;
+    div.setAttribute('data-id', s.id);
+    div.setAttribute('data-price', s.defaultPrice);
+    div.setAttribute('data-name', s.name);
+    
+    div.innerHTML = `
+      <div class="service-select-info">
+        <span class="service-select-name">${s.name}</span>
+        <span class="service-select-cat">${s.category} (${s.priceRange})</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div class="service-qty-control" onclick="event.stopPropagation()">
+          <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 700;">Đôi:</span>
+          <input type="number" class="service-qty-input" value="${quantity}" min="1">
+        </div>
+        <span class="service-select-price">${formatVND(s.defaultPrice)}</span>
+      </div>
+    `;
+
+    div.addEventListener('click', () => {
+      div.classList.toggle('selected');
+      calculateOrderFormTotal();
+    });
+
+    const qtyInput = div.querySelector('.service-qty-input');
+    qtyInput.addEventListener('change', calculateOrderFormTotal);
+    qtyInput.addEventListener('input', calculateOrderFormTotal);
+    qtyInput.addEventListener('click', (e) => e.stopPropagation());
+    qtyInput.addEventListener('keyup', (e) => e.stopPropagation());
+
+    container.appendChild(div);
+  });
+}
+
+function calculateOrderFormTotal() {
+  let total = 0;
+  document.querySelectorAll('#form-services-selector .service-select-item.selected').forEach(item => {
+    const price = parseInt(item.getAttribute('data-price')) || 0;
+    const qtyInput = item.querySelector('.service-qty-input');
+    const qty = parseInt(qtyInput.value) || 1;
+    total += price * qty;
+  });
+  document.getElementById('order-total-price').value = total;
+}
+
+function openOrderModal(orderId = null) {
+  const modal = document.getElementById('order-modal');
+  const title = document.getElementById('order-modal-title');
+  const form = document.getElementById('order-form');
+  
+  form.reset();
+  state.currentEditingOrder = null;
+
+  if (orderId) {
+    // Edit Order
+    state.currentEditingOrder = state.orders.find(o => o.id === orderId);
+    title.textContent = `Chỉnh Sửa Đơn Hàng ${orderId}`;
+    
+    // Fill form
+    document.getElementById('order-cust-name').value = state.currentEditingOrder.customerName;
+    document.getElementById('order-cust-phone').value = state.currentEditingOrder.customerPhone;
+    document.getElementById('order-shoe-info').value = state.currentEditingOrder.shoeInfo;
+    document.getElementById('order-notes').value = state.currentEditingOrder.notes;
+    document.getElementById('order-status').value = state.currentEditingOrder.status;
+    document.getElementById('order-total-price').value = state.currentEditingOrder.totalPrice;
+    
+    // Status selection visibility
+    document.getElementById('status-form-group').style.display = 'block';
+    
+    // Populate services selector and preselect
+    populateServiceSelector(state.currentEditingOrder.services);
+  } else {
+    // New Order
+    title.textContent = 'Thêm Đơn Hàng Mới';
+    document.getElementById('status-form-group').style.display = 'block'; // Show status dropdown
+    document.getElementById('order-status').value = 'pending'; // Default status
+    populateServiceSelector([]);
+  }
+
+  modal.classList.add('active');
+}
+
+function closeOrderModal() {
+  document.getElementById('order-modal').classList.remove('active');
+}
+
+function handleOrderSubmit(e) {
+  e.preventDefault();
+  
+  const custName = document.getElementById('order-cust-name').value.trim();
+  const custPhone = document.getElementById('order-cust-phone').value.trim();
+  const shoeInfo = document.getElementById('order-shoe-info').value.trim();
+  const notes = document.getElementById('order-notes').value.trim();
+  const totalPrice = parseInt(document.getElementById('order-total-price').value) || 0;
+  
+  // Selected services
+  const selectedServices = [];
+  document.querySelectorAll('#form-services-selector .service-select-item.selected').forEach(item => {
+    const qtyInput = item.querySelector('.service-qty-input');
+    const qty = parseInt(qtyInput.value) || 1;
+    selectedServices.push({
+      id: item.getAttribute('data-id'),
+      name: item.getAttribute('data-name'),
+      price: parseInt(item.getAttribute('data-price')),
+      quantity: qty
+    });
+  });
+
+  if (selectedServices.length === 0) {
+    alert('Vui lòng chọn ít nhất một dịch vụ!');
+    return;
+  }
+
+  if (state.currentEditingOrder) {
+    // Edit
+    const order = state.orders.find(o => o.id === state.currentEditingOrder.id);
+    order.customerName = custName;
+    order.customerPhone = custPhone;
+    order.shoeInfo = shoeInfo;
+    order.notes = notes;
+    order.services = selectedServices;
+    order.totalPrice = totalPrice;
+    
+    const newStatus = document.getElementById('order-status').value;
+    if (newStatus !== order.status) {
+      order.status = newStatus;
+      if (['completed', 'delivered', 'paid'].includes(newStatus)) {
+        order.completedDate = new Date().toISOString();
+      } else {
+        order.completedDate = null;
+      }
+    }
+
+    alert(`Cập nhật đơn hàng ${order.id} thành công!`);
+  } else {
+    // Create new
+    // Generate order ID: PB + number
+    let nextNum = 1001;
+    if (state.orders.length > 0) {
+      const numbers = state.orders.map(o => parseInt(o.id.replace('PB-', ''))).filter(n => !isNaN(n));
+      if (numbers.length > 0) {
+        nextNum = Math.max(...numbers) + 1;
+      }
+    }
+    const orderId = `PB-${nextNum}`;
+
+    const statusVal = document.getElementById('order-status').value || 'pending';
+    const isCompleted = ['completed', 'delivered', 'paid'].includes(statusVal);
+
+    const newOrder = {
+      id: orderId,
+      customerName: custName,
+      customerPhone: custPhone,
+      shoeInfo: shoeInfo,
+      services: selectedServices,
+      totalPrice: totalPrice,
+      status: statusVal,
+      notes: notes,
+      receivedDate: new Date().toISOString(),
+      completedDate: isCompleted ? new Date().toISOString() : null,
+      staffId: state.currentUser.id,
+      staffName: state.currentUser.name
+    };
+
+    state.orders.push(newOrder);
+    alert(`Tạo đơn hàng ${orderId} thành công!`);
+  }
+
+  saveState('pb_orders', state.orders);
+  closeOrderModal();
+  renderOrders();
+}
+
+function deleteOrder(orderId) {
+  if (confirm(`Bạn có chắc chắn muốn xóa đơn hàng ${orderId}?`)) {
+    state.orders = state.orders.filter(o => o.id !== orderId);
+    saveState('pb_orders', state.orders);
+    renderOrders();
+  }
+}
+
+// 5. DETAIL VIEW & RECEIPT PRINT
+function viewOrderDetail(orderId) {
+  const order = state.orders.find(o => o.id === orderId);
+  if (!order) return;
+
+  // Fill in detail modal
+  document.getElementById('det-order-id').textContent = order.id;
+  
+  // Status label
+  let statusText = 'Chờ xử lý';
+  let badgeClass = 'badge-pending';
+  switch (order.status) {
+    case 'pending': statusText = 'Chờ xử lý'; badgeClass = 'badge-pending'; break;
+    case 'processing': statusText = 'Đang tiến hành'; badgeClass = 'badge-processing'; break;
+    case 'completed': statusText = 'Đã hoàn thành'; badgeClass = 'badge-completed'; break;
+    case 'paid': statusText = 'Đã thanh toán'; badgeClass = 'badge-paid'; break;
+    case 'delivered': statusText = 'Đã giao khách'; badgeClass = 'badge-delivered'; break;
+    case 'cancelled': statusText = 'Đã hủy'; badgeClass = 'badge-cancelled'; break;
+  }
+  
+  const statusBadge = document.getElementById('det-status');
+  statusBadge.className = `badge ${badgeClass}`;
+  statusBadge.textContent = statusText;
+
+  document.getElementById('det-cust-name').textContent = order.customerName;
+  document.getElementById('det-cust-phone').textContent = order.customerPhone;
+  document.getElementById('det-shoe-info').textContent = order.shoeInfo;
+  document.getElementById('det-received-date').textContent = formatDateTime(order.receivedDate);
+  document.getElementById('det-completed-date').textContent = formatDateTime(order.completedDate);
+  document.getElementById('det-staff').textContent = order.staffName || 'Chưa phân công';
+  document.getElementById('det-notes').textContent = order.notes || 'Không có ghi chú';
+  document.getElementById('det-total-price').textContent = formatVND(order.totalPrice);
+
+  // Populate services list
+  const servicesList = document.getElementById('det-services-list');
+  servicesList.innerHTML = '';
+  order.services.forEach(s => {
+    const qty = s.quantity || 1;
+    const li = document.createElement('li');
+    li.className = 'receipt-service-item';
+    li.innerHTML = `
+      <span>${s.name} ${qty > 1 ? `<span style="color: var(--text-secondary); font-weight: 500;">(x${qty})</span>` : ''}</span>
+      <span style="font-weight: 600;">${formatVND(s.price * qty)}</span>
+    `;
+    servicesList.appendChild(li);
+  });
+
+  // Prepare printing area data
+  document.getElementById('print-receipt-id').textContent = order.id;
+  document.getElementById('print-date').textContent = formatDateTime(new Date());
+  document.getElementById('print-cust-name').textContent = order.customerName;
+  document.getElementById('print-cust-phone').textContent = order.customerPhone;
+  document.getElementById('print-shoe-info').textContent = order.shoeInfo;
+  document.getElementById('print-notes').textContent = order.notes || 'Không có';
+  
+  const printTableBody = document.getElementById('print-services-body');
+  printTableBody.innerHTML = '';
+  order.services.forEach(s => {
+    const qty = s.quantity || 1;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${s.name} ${qty > 1 ? `(x${qty})` : ''}</td>
+      <td style="text-align: right;">${formatVND(s.price * qty)}</td>
+    `;
+    printTableBody.appendChild(tr);
+  });
+  document.getElementById('print-total-price').textContent = formatVND(order.totalPrice);
+
+  // Store for printing trigger
+  state.currentEditingOrder = order;
+
+  // Toggle Quick Pay button display
+  const payBtn = document.getElementById('btn-detail-pay');
+  if (payBtn) {
+    if (['pending', 'processing', 'completed'].includes(order.status)) {
+      payBtn.style.display = 'inline-flex';
+    } else {
+      payBtn.style.display = 'none';
+    }
+  }
+
+  // Open modal
+  document.getElementById('detail-modal').classList.add('active');
+}
+
+function closeDetailModal() {
+  document.getElementById('detail-modal').classList.remove('active');
+}
+
+function printReceipt() {
+  window.print();
+}
+
+function quickPayOrder() {
+  if (!state.currentEditingOrder) return;
+  const orderId = state.currentEditingOrder.id;
+  quickPayOrderLogic(orderId);
+  closeDetailModal();
+}
+
+function quickPayOrderFromTable(orderId) {
+  const order = state.orders.find(o => o.id === orderId);
+  if (order) {
+    if (confirm(`Xác nhận thanh toán cho đơn hàng ${orderId} (${formatVND(order.totalPrice)})?`)) {
+      quickPayOrderLogic(orderId);
+    }
+  }
+}
+
+function quickPayOrderLogic(orderId) {
+  const order = state.orders.find(o => o.id === orderId);
+  if (order) {
+    order.status = 'paid';
+    order.completedDate = new Date().toISOString();
+    saveState('pb_orders', state.orders);
+    renderOrders();
+    if (state.activeView === 'dashboard') {
+      renderDashboard();
+    }
+  }
+}
+
+// 6. SERVICE SETTINGS CRUD
+function renderServicesList() {
+  const grid = document.getElementById('services-grid');
+  grid.innerHTML = '';
+
+  state.services.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'service-card';
+    card.innerHTML = `
+      <div>
+        <div class="service-card-header">
+          <span class="service-card-cat">${s.category}</span>
+        </div>
+        <h4 class="service-card-title">${s.name}</h4>
+        <div style="font-size: 0.8rem; color: var(--text-light); margin-bottom: 8px;">Khoảng giá: ${s.priceRange}</div>
+      </div>
+      <div>
+        <div class="service-card-price">${formatVND(s.defaultPrice)}</div>
+        <div class="service-card-actions">
+          <button class="btn btn-secondary btn-sm" onclick="openServiceModal('${s.id}')">Sửa</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteService('${s.id}')">Xóa</button>
+        </div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function openServiceModal(serviceId = null) {
+  const modal = document.getElementById('service-modal');
+  const title = document.getElementById('service-modal-title');
+  const form = document.getElementById('service-form');
+  
+  form.reset();
+  state.currentEditingService = null;
+
+  if (serviceId) {
+    state.currentEditingService = state.services.find(s => s.id === serviceId);
+    title.textContent = 'Chỉnh Sửa Dịch Vụ';
+    document.getElementById('service-name').value = state.currentEditingService.name;
+    document.getElementById('service-category').value = state.currentEditingService.category;
+    document.getElementById('service-price').value = state.currentEditingService.defaultPrice;
+    document.getElementById('service-range').value = state.currentEditingService.priceRange;
+  } else {
+    title.textContent = 'Thêm Dịch Vụ Mới';
+  }
+
+  modal.classList.add('active');
+}
+
+function closeServiceModal() {
+  document.getElementById('service-modal').classList.remove('active');
+}
+
+function handleServiceSubmit(e) {
+  e.preventDefault();
+  
+  const name = document.getElementById('service-name').value.trim();
+  const category = document.getElementById('service-category').value;
+  const price = parseInt(document.getElementById('service-price').value) || 0;
+  const range = document.getElementById('service-range').value.trim();
+
+  if (state.currentEditingService) {
+    const s = state.services.find(serv => serv.id === state.currentEditingService.id);
+    s.name = name;
+    s.category = category;
+    s.defaultPrice = price;
+    s.priceRange = range || `${formatVND(price)}`;
+    alert('Cập nhật dịch vụ thành công!');
+  } else {
+    const id = 's-' + Date.now();
+    state.services.push({
+      id: id,
+      name: name,
+      category: category,
+      defaultPrice: price,
+      priceRange: range || `${formatVND(price)}`
+    });
+    alert('Thêm dịch vụ mới thành công!');
+  }
+
+  saveState('pb_services', state.services);
+  closeServiceModal();
+  renderServicesList();
+}
+
+function deleteService(serviceId) {
+  if (confirm('Bạn có chắc muốn xóa dịch vụ này? Sẽ không ảnh hưởng đến đơn hàng cũ.')) {
+    state.services = state.services.filter(s => s.id !== serviceId);
+    saveState('pb_services', state.services);
+    renderServicesList();
+  }
+}
+
+// 7. EMPLOYEE MANAGEMENT CRUD
+function renderEmployeesList() {
+  const grid = document.getElementById('employees-grid');
+  grid.innerHTML = '';
+
+  state.users.forEach(u => {
+    const card = document.createElement('div');
+    card.className = 'employee-card';
+    card.innerHTML = `
+      <div class="employee-avatar">${u.name.split(' ').pop().substring(0, 2).toUpperCase()}</div>
+      <div class="employee-details">
+        <div class="employee-name">${u.name}</div>
+        <div class="employee-email">${u.email}</div>
+        <span class="employee-role-badge">${u.role === 'admin' ? 'Quản trị' : 'Nhân viên'}</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+        <button class="btn btn-secondary btn-sm" onclick="openEmployeeModal('${u.id}')">Sửa</button>
+        ${u.id !== 'u-admin' ? `
+          <button class="btn btn-danger btn-sm" onclick="deleteEmployee('${u.id}')">Xóa</button>
+        ` : ''}
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function openEmployeeModal(userId = null) {
+  const modal = document.getElementById('employee-modal');
+  const title = document.getElementById('employee-modal-title');
+  const submitBtn = document.getElementById('employee-submit-btn');
+  const form = document.getElementById('employee-form');
+  const roleSelect = document.getElementById('emp-role');
+  
+  form.reset();
+  state.currentEditingEmployee = null;
+  roleSelect.disabled = false;
+
+  if (userId) {
+    state.currentEditingEmployee = state.users.find(u => u.id === userId);
+    title.textContent = 'Chỉnh Sửa Tài Khoản';
+    submitBtn.textContent = 'Lưu thay đổi';
+    
+    // Fill in form values
+    document.getElementById('emp-name').value = state.currentEditingEmployee.name;
+    document.getElementById('emp-email').value = state.currentEditingEmployee.email;
+    document.getElementById('emp-password').value = state.currentEditingEmployee.password;
+    roleSelect.value = state.currentEditingEmployee.role;
+
+    // Do not allow main admin to change their own role to prevent lockout
+    if (userId === 'u-admin') {
+      roleSelect.disabled = true;
+    }
+  } else {
+    title.textContent = 'Thêm Tài Khoản Nhân Viên Mới';
+    submitBtn.textContent = 'Tạo tài khoản';
+  }
+
+  modal.classList.add('active');
+}
+
+function closeEmployeeModal() {
+  document.getElementById('emp-role').disabled = false;
+  document.getElementById('employee-modal').classList.remove('active');
+}
+
+function handleEmployeeSubmit(e) {
+  e.preventDefault();
+  const name = document.getElementById('emp-name').value.trim();
+  const email = document.getElementById('emp-email').value.trim();
+  const password = document.getElementById('emp-password').value;
+  const role = document.getElementById('emp-role').value;
+
+  if (state.currentEditingEmployee) {
+    // Editing
+    const isEmailTaken = state.users.some(u => u.email === email && u.id !== state.currentEditingEmployee.id);
+    if (isEmailTaken) {
+      alert('Email này đã tồn tại trong hệ thống!');
+      return;
+    }
+
+    const u = state.users.find(user => user.id === state.currentEditingEmployee.id);
+    u.name = name;
+    u.email = email;
+    u.password = password;
+    
+    // Only update role if it wasn't disabled (i.e. not main admin)
+    if (u.id !== 'u-admin') {
+      u.role = role;
+    }
+
+    // If editing self, update currentUser in state and localStorage
+    if (state.currentUser && state.currentUser.id === u.id) {
+      state.currentUser = { ...u };
+      saveState('pb_current_user', state.currentUser);
+      updateProfileUI();
+    }
+
+    alert('Cập nhật tài khoản thành công!');
+  } else {
+    // Creating
+    if (state.users.some(u => u.email === email)) {
+      alert('Email này đã tồn tại trong hệ thống!');
+      return;
+    }
+
+    state.users.push({
+      id: 'u-' + Date.now(),
+      name: name,
+      email: email,
+      password: password,
+      role: role
+    });
+    alert('Thêm tài khoản nhân viên thành công!');
+  }
+
+  saveState('pb_users', state.users);
+  closeEmployeeModal();
+  renderEmployeesList();
+  alert('Thêm tài khoản nhân viên thành công!');
+}
+
+function deleteEmployee(userId) {
+  if (confirm('Bạn có chắc chắn muốn xóa tài khoản này?')) {
+    state.users = state.users.filter(u => u.id !== userId);
+    saveState('pb_users', state.users);
+    renderEmployeesList();
+  }
+}
+
+// 8. CUSTOMER MANAGEMENT
+function renderCustomers() {
+  const searchTerm = document.getElementById('search-customer').value.toLowerCase();
+  const tbody = document.getElementById('customers-table-body');
+  tbody.innerHTML = '';
+
+  const customerMap = {};
+  state.orders.forEach(o => {
+    const phone = o.customerPhone.trim();
+    if (!phone) return;
+    if (!customerMap[phone]) {
+      customerMap[phone] = {
+        name: o.customerName,
+        phone: phone,
+        orderCount: 0,
+        totalSpent: 0,
+        lastOrderDate: o.receivedDate
+      };
+    }
+    customerMap[phone].orderCount++;
+    customerMap[phone].totalSpent += o.totalPrice;
+    if (new Date(o.receivedDate) > new Date(customerMap[phone].lastOrderDate)) {
+      customerMap[phone].lastOrderDate = o.receivedDate;
+      customerMap[phone].name = o.customerName;
+    }
+  });
+
+  let customers = Object.values(customerMap);
+
+  if (searchTerm) {
+    customers = customers.filter(c => 
+      c.name.toLowerCase().includes(searchTerm) || 
+      c.phone.includes(searchTerm)
+    );
+  }
+
+  customers.sort((a, b) => b.totalSpent - a.totalSpent);
+
+  if (customers.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center" style="padding: 30px; color: var(--text-light);">Không tìm thấy khách hàng nào</td></tr>`;
+    return;
+  }
+
+  customers.forEach(c => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight: 700; color: var(--color-brand-brown-dark);">${c.name}</td>
+      <td style="font-weight: 600;">${c.phone}</td>
+      <td style="font-weight: 700; text-align: center; color: var(--text-secondary);">${c.orderCount}</td>
+      <td style="font-weight: 700; color: var(--color-brand-gold);">${formatVND(c.totalSpent)}</td>
+      <td style="font-size: 0.85rem; color: var(--text-secondary);">${formatDateTime(c.lastOrderDate)}</td>
+      <td>
+        <div class="action-buttons">
+          <button class="action-btn edit" onclick="viewCustomerDetail('${c.phone}')" title="Xem lịch sử mua hàng">
+            <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+          </button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function viewCustomerDetail(phone) {
+  const customerOrders = state.orders.filter(o => o.customerPhone.trim() === phone.trim());
+  if (customerOrders.length === 0) return;
+
+  customerOrders.sort((a, b) => new Date(b.receivedDate) - new Date(a.receivedDate));
+
+  const customerName = customerOrders[0].customerName;
+  const totalSpent = customerOrders.reduce((sum, o) => sum + o.totalPrice, 0);
+
+  document.getElementById('cust-det-name').textContent = customerName;
+  document.getElementById('cust-det-phone').textContent = phone;
+  document.getElementById('cust-det-orders-count').textContent = customerOrders.length;
+  document.getElementById('cust-det-spent').textContent = formatVND(totalSpent);
+
+  const tbody = document.getElementById('cust-det-orders-table-body');
+  tbody.innerHTML = '';
+
+  customerOrders.forEach(o => {
+    const tr = document.createElement('tr');
+    
+    let statusText = 'Chờ xử lý';
+    let badgeClass = 'badge-pending';
+    switch (o.status) {
+      case 'pending': statusText = 'Chờ xử lý'; badgeClass = 'badge-pending'; break;
+      case 'processing': statusText = 'Đang tiến hành'; badgeClass = 'badge-processing'; break;
+      case 'completed': statusText = 'Đã hoàn thành'; badgeClass = 'badge-completed'; break;
+      case 'paid': statusText = 'Đã thanh toán'; badgeClass = 'badge-paid'; break;
+      case 'delivered': statusText = 'Đã giao khách'; badgeClass = 'badge-delivered'; break;
+      case 'cancelled': statusText = 'Đã hủy'; badgeClass = 'badge-cancelled'; break;
+    }
+
+    tr.innerHTML = `
+      <td style="font-weight: 700; color: var(--color-brand-brown-dark);">${o.id}</td>
+      <td>
+        <div style="font-weight: 600;">${o.shoeInfo}</div>
+        <div style="font-size: 0.8rem; color: var(--text-light);">${o.services.map(s => s.name).join(', ')}</div>
+      </td>
+      <td style="font-weight: 700; color: var(--color-brand-gold);">${formatVND(o.totalPrice)}</td>
+      <td style="font-size: 0.8rem; color: var(--text-secondary);">${formatDateTime(o.receivedDate)}</td>
+      <td><span class="badge ${badgeClass}">${statusText}</span></td>
+      <td>
+        <button class="action-btn edit" onclick="closeCustomerDetailModal(); viewOrderDetail('${o.id}')" title="Xem chi tiết đơn hàng">
+          <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('customer-detail-modal').classList.add('active');
+}
+
+function closeCustomerDetailModal() {
+  document.getElementById('customer-detail-modal').classList.remove('active');
+}
+
+// 9. DASHBOARD / ANALYTICS CHARTS (PURE HTML5 CANVAS)
+function renderDashboard() {
+  const dbFilterDate = document.getElementById('db-filter-date').value;
+  const dbFilterMonth = document.getElementById('db-filter-month').value;
+  const dbFilterYear = document.getElementById('db-filter-year').value;
+
+  // Filter orders based on day, month, year
+  const filteredOrders = state.orders.filter(o => isDateMatch(o.receivedDate, dbFilterDate, dbFilterMonth, dbFilterYear));
+
+  // Statistics Calculations
+  const totalOrders = filteredOrders.length;
+  const completedOrders = filteredOrders.filter(o => ['completed', 'delivered', 'paid'].includes(o.status)).length;
+  const activeOrders = filteredOrders.filter(o => ['pending', 'processing'].includes(o.status)).length;
+  
+  const totalRevenue = filteredOrders
+    .filter(o => ['completed', 'delivered', 'paid'].includes(o.status))
+    .reduce((sum, o) => sum + o.totalPrice, 0);
+
+  // Update DOM stats
+  document.getElementById('stat-total-orders').textContent = totalOrders;
+  document.getElementById('stat-active-orders').textContent = activeOrders;
+  document.getElementById('stat-completed-orders').textContent = completedOrders;
+  document.getElementById('stat-revenue').textContent = formatVND(totalRevenue);
+
+  // Render Canvas Charts using the filtered list
+  drawRevenueTrendChart(filteredOrders);
+  drawPopularServicesChart(filteredOrders);
+}
+
+function drawRevenueTrendChart(filteredOrders) {
+  const canvas = document.getElementById('chart-revenue');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  
+  // Set dimensions dynamically based on container
+  const rect = canvas.parentNode.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = 260;
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = 50;
+
+  ctx.clearRect(0, 0, width, height);
+
+  const dbFilterMonth = document.getElementById('db-filter-month').value;
+  const dbFilterYear = document.getElementById('db-filter-year').value;
+
+  let dataPoints = [];
+
+  if (dbFilterMonth !== 'all' && dbFilterYear !== 'all') {
+    // Show daily revenue for that month
+    const year = parseInt(dbFilterYear);
+    const month = parseInt(dbFilterMonth);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      dataPoints.push({
+        dayNum: day,
+        label: `${day}`,
+        revenue: 0
+      });
+    }
+
+    filteredOrders.forEach(o => {
+      if (['completed', 'delivered', 'paid'].includes(o.status) && o.completedDate) {
+        const d = new Date(o.completedDate);
+        if (d.getFullYear() === year && (d.getMonth() + 1) === month) {
+          const dayData = dataPoints.find(dp => dp.dayNum === d.getDate());
+          if (dayData) dayData.revenue += o.totalPrice;
+        }
+      }
+    });
+  } else if (dbFilterYear !== 'all') {
+    // Show monthly revenue for that year
+    const year = parseInt(dbFilterYear);
+    for (let m = 1; m <= 12; m++) {
+      dataPoints.push({
+        monthNum: m,
+        label: `T${m}`,
+        revenue: 0
+      });
+    }
+
+    filteredOrders.forEach(o => {
+      if (['completed', 'delivered', 'paid'].includes(o.status) && o.completedDate) {
+        const d = new Date(o.completedDate);
+        if (d.getFullYear() === year) {
+          const monthData = dataPoints.find(dp => dp.monthNum === (d.getMonth() + 1));
+          if (monthData) monthData.revenue += o.totalPrice;
+        }
+      }
+    });
+  } else {
+    // Default: Last 7 days
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      dataPoints.push({
+        dateStr: d.toISOString().split('T')[0],
+        label: `${d.getDate()}/${d.getMonth() + 1}`,
+        revenue: 0
+      });
+    }
+
+    filteredOrders.forEach(o => {
+      if (['completed', 'delivered', 'paid'].includes(o.status) && o.completedDate) {
+        const orderDate = o.completedDate.split('T')[0];
+        const day = dataPoints.find(d => d.dateStr === orderDate);
+        if (day) {
+          day.revenue += o.totalPrice;
+        }
+      }
+    });
+  }
+
+  const maxRevenue = Math.max(...dataPoints.map(d => d.revenue), 100000); // min 100k scale
+
+  // Draw Grid Lines & Labels
+  ctx.strokeStyle = '#EADFD5';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#706054';
+  ctx.font = '10px Montserrat';
+  ctx.textAlign = 'right';
+
+  const gridSteps = 4;
+  for (let i = 0; i <= gridSteps; i++) {
+    const val = (maxRevenue / gridSteps) * i;
+    const y = height - padding - ((height - 2 * padding) / gridSteps) * i;
+    
+    ctx.beginPath();
+    ctx.moveTo(padding, y);
+    ctx.lineTo(width - padding, y);
+    ctx.stroke();
+
+    ctx.fillText(formatVND(val).replace('₫', '').trim(), padding - 10, y + 4);
+  }
+
+  // Draw X labels
+  ctx.textAlign = 'center';
+  const pointsCount = dataPoints.length;
+  const labelInterval = pointsCount > 15 ? 3 : 1;
+  const pointSpacing = (width - 2 * padding) / (pointsCount - 1 || 1);
+
+  dataPoints.forEach((d, idx) => {
+    const x = padding + pointSpacing * idx;
+    if (idx % labelInterval === 0 || idx === pointsCount - 1) {
+      ctx.fillText(d.label, x, height - padding + 20);
+    }
+  });
+
+  // Plot line
+  ctx.strokeStyle = '#E89C19'; // Brand Gold
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+
+  const points = dataPoints.map((d, idx) => {
+    const x = padding + pointSpacing * idx;
+    const y = height - padding - ((height - 2 * padding) * d.revenue) / maxRevenue;
+    return { x, y };
+  });
+
+  points.forEach((pt, idx) => {
+    if (idx === 0) {
+      ctx.moveTo(pt.x, pt.y);
+    } else {
+      ctx.lineTo(pt.x, pt.y);
+    }
+  });
+  ctx.stroke();
+
+  // Draw area gradient
+  const gradient = ctx.createLinearGradient(0, padding, 0, height - padding);
+  gradient.addColorStop(0, 'rgba(232, 156, 25, 0.3)');
+  gradient.addColorStop(1, 'rgba(232, 156, 25, 0.0)');
+  ctx.fillStyle = gradient;
+  
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, height - padding);
+  points.forEach(pt => ctx.lineTo(pt.x, pt.y));
+  ctx.lineTo(points[points.length - 1].x, height - padding);
+  ctx.closePath();
+  ctx.fill();
+
+  // Draw points circles if count <= 12
+  if (pointsCount <= 12) {
+    ctx.fillStyle = '#4A3728';
+    ctx.strokeStyle = '#E89C19';
+    ctx.lineWidth = 2;
+
+    points.forEach((pt, idx) => {
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (dataPoints[idx].revenue > 0) {
+        ctx.fillStyle = '#2C2018';
+        ctx.font = 'bold 9px Montserrat';
+        ctx.fillText(formatVND(dataPoints[idx].revenue).replace('₫', '').trim(), pt.x, pt.y - 12);
+      }
+    });
+  }
+}
+
+function drawPopularServicesChart(filteredOrders) {
+  const canvas = document.getElementById('chart-services');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  const rect = canvas.parentNode.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = 260;
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = 40;
+
+  ctx.clearRect(0, 0, width, height);
+
+  const serviceStats = {};
+  filteredOrders.forEach(o => {
+    o.services.forEach(s => {
+      serviceStats[s.name] = (serviceStats[s.name] || 0) + 1;
+    });
+  });
+
+  const popular = Object.keys(serviceStats)
+    .map(name => ({ name, count: serviceStats[name] }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5); // top 5
+
+  if (popular.length === 0) {
+    ctx.fillStyle = '#9B8E85';
+    ctx.font = '14px Montserrat';
+    ctx.textAlign = 'center';
+    ctx.fillText('Chưa có dữ liệu dịch vụ', width / 2, height / 2);
+    return;
+  }
+
+  // Draw Pie/Doughnut Chart
+  const centerX = width / 2;
+  const centerY = height / 2 - 10;
+  const radius = Math.min(width, height) / 2 - 50;
+
+  let totalCount = popular.reduce((sum, item) => sum + item.count, 0);
+  let startAngle = -Math.PI / 2;
+
+  const colors = ['#E89C19', '#4A3728', '#6E533F', '#A08068', '#C6A995'];
+
+  // Draw Slices
+  popular.forEach((item, idx) => {
+    const sliceAngle = (item.count / totalCount) * 2 * Math.PI;
+    
+    ctx.fillStyle = colors[idx % colors.length];
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY);
+    ctx.arc(centerX, centerY, radius, startAngle, startAngle + sliceAngle);
+    ctx.closePath();
+    ctx.fill();
+
+    startAngle += sliceAngle;
+  });
+
+  // Draw Inner circle (Doughnut style)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Draw Legend at the bottom
+  ctx.font = '9px Montserrat';
+  ctx.textAlign = 'left';
+  
+  const legendYStart = height - 35;
+  const itemWidth = width / popular.length;
+
+  popular.forEach((item, idx) => {
+    const x = itemWidth * idx + 10;
+    
+    // Color square
+    ctx.fillStyle = colors[idx % colors.length];
+    ctx.fillRect(x, legendYStart, 8, 8);
+
+    // Label
+    ctx.fillStyle = '#2C2018';
+    ctx.fillText(`${item.name.substring(0, 10)}... (${item.count})`, x + 14, legendYStart + 8);
+  });
+}
+
+// 9. WINDOWS / EVENT HANDLERS INIT
+window.addEventListener('DOMContentLoaded', () => {
+  initData();
+  
+  // Navigation listeners
+  document.querySelectorAll('.sidebar-menu li').forEach(li => {
+    li.addEventListener('click', () => {
+      const view = li.getAttribute('data-view');
+      if (view) switchView(view);
+    });
+  });
+
+  // Login form
+  document.getElementById('login-form').addEventListener('submit', handleLogin);
+  
+  // Order search and filters
+  document.getElementById('search-order').addEventListener('input', renderOrders);
+  document.getElementById('filter-status').addEventListener('change', renderOrders);
+  document.getElementById('filter-date').addEventListener('change', renderOrders);
+  document.getElementById('filter-month').addEventListener('change', renderOrders);
+  document.getElementById('filter-year').addEventListener('change', renderOrders);
+
+  // Reset order filters
+  document.getElementById('btn-reset-order-filters').addEventListener('click', () => {
+    document.getElementById('search-order').value = '';
+    document.getElementById('filter-status').value = 'all';
+    document.getElementById('filter-date').value = '';
+    document.getElementById('filter-month').value = 'all';
+    document.getElementById('filter-year').value = 'all';
+    renderOrders();
+  });
+
+  // Customer filters
+  const searchCust = document.getElementById('search-customer');
+  if (searchCust) {
+    searchCust.addEventListener('input', renderCustomers);
+  }
+  const resetCust = document.getElementById('btn-reset-customer-filters');
+  if (resetCust) {
+    resetCust.addEventListener('click', () => {
+      document.getElementById('search-customer').value = '';
+      renderCustomers();
+    });
+  }
+
+  // Dashboard filters
+  document.getElementById('db-filter-date').addEventListener('change', renderDashboard);
+  document.getElementById('db-filter-month').addEventListener('change', renderDashboard);
+  document.getElementById('db-filter-year').addEventListener('change', renderDashboard);
+
+  // Reset dashboard filters
+  document.getElementById('btn-reset-db-filters').addEventListener('click', () => {
+    document.getElementById('db-filter-date').value = '';
+    document.getElementById('db-filter-month').value = 'all';
+    document.getElementById('db-filter-year').value = 'all';
+    renderDashboard();
+  });
+
+  // Resize charts on window resize
+  window.addEventListener('resize', () => {
+    if (state.activeView === 'dashboard') {
+      renderDashboard();
+    }
+  });
+});
