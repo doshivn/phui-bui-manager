@@ -62,14 +62,7 @@ async function initData() {
     loadFromLocalStorage();
   }
 
-  // Ensure new mock paid order is loaded if state is already initialized
-  if (state.orders.length > 0 && !state.orders.some(o => o.id === 'PB-1004')) {
-    const pb1004 = (window.INITIAL_ORDERS || []).find(o => o.id === 'PB-1004');
-    if (pb1004) {
-      state.orders.push(pb1004);
-      saveState('pb_orders', state.orders);
-    }
-  }
+
 
   // Check login state
   const savedUser = localStorage.getItem('pb_current_user');
