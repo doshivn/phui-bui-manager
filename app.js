@@ -1096,15 +1096,20 @@ function renderDashboard() {
   const completedOrders = filteredOrders.filter(o => ['completed', 'delivered', 'paid'].includes(o.status)).length;
   const activeOrders = filteredOrders.filter(o => ['pending', 'processing'].includes(o.status)).length;
   
-  const totalRevenue = filteredOrders
-    .filter(o => ['completed', 'delivered', 'paid'].includes(o.status))
+  const expectedRevenue = filteredOrders
+    .filter(o => o.status !== 'cancelled')
+    .reduce((sum, o) => sum + o.totalPrice, 0);
+
+  const realizedRevenue = filteredOrders
+    .filter(o => ['paid', 'delivered'].includes(o.status))
     .reduce((sum, o) => sum + o.totalPrice, 0);
 
   // Update DOM stats
   document.getElementById('stat-total-orders').textContent = totalOrders;
   document.getElementById('stat-active-orders').textContent = activeOrders;
   document.getElementById('stat-completed-orders').textContent = completedOrders;
-  document.getElementById('stat-revenue').textContent = formatVND(totalRevenue);
+  document.getElementById('stat-revenue-expected').textContent = formatVND(expectedRevenue);
+  document.getElementById('stat-revenue-realized').textContent = formatVND(realizedRevenue);
 
   // Render Canvas Charts using the filtered list
   drawRevenueTrendChart(filteredOrders);
@@ -1142,16 +1147,24 @@ function drawRevenueTrendChart(filteredOrders) {
       dataPoints.push({
         dayNum: day,
         label: `${day}`,
-        revenue: 0
+        expected: 0,
+        realized: 0
       });
     }
 
     filteredOrders.forEach(o => {
-      if (['completed', 'delivered', 'paid'].includes(o.status) && o.completedDate) {
-        const d = new Date(o.completedDate);
-        if (d.getFullYear() === year && (d.getMonth() + 1) === month) {
-          const dayData = dataPoints.find(dp => dp.dayNum === d.getDate());
-          if (dayData) dayData.revenue += o.totalPrice;
+      // Map based on receivedDate for expected, completedDate for realized
+      const rDate = new Date(o.receivedDate);
+      if (o.status !== 'cancelled' && rDate.getFullYear() === year && (rDate.getMonth() + 1) === month) {
+        const dayData = dataPoints.find(dp => dp.dayNum === rDate.getDate());
+        if (dayData) dayData.expected += o.totalPrice;
+      }
+      
+      if (['paid', 'delivered'].includes(o.status) && o.completedDate) {
+        const cDate = new Date(o.completedDate);
+        if (cDate.getFullYear() === year && (cDate.getMonth() + 1) === month) {
+          const dayData = dataPoints.find(dp => dp.dayNum === cDate.getDate());
+          if (dayData) dayData.realized += o.totalPrice;
         }
       }
     });
@@ -1162,16 +1175,23 @@ function drawRevenueTrendChart(filteredOrders) {
       dataPoints.push({
         monthNum: m,
         label: `T${m}`,
-        revenue: 0
+        expected: 0,
+        realized: 0
       });
     }
 
     filteredOrders.forEach(o => {
-      if (['completed', 'delivered', 'paid'].includes(o.status) && o.completedDate) {
-        const d = new Date(o.completedDate);
-        if (d.getFullYear() === year) {
-          const monthData = dataPoints.find(dp => dp.monthNum === (d.getMonth() + 1));
-          if (monthData) monthData.revenue += o.totalPrice;
+      const rDate = new Date(o.receivedDate);
+      if (o.status !== 'cancelled' && rDate.getFullYear() === year) {
+        const monthData = dataPoints.find(dp => dp.monthNum === (rDate.getMonth() + 1));
+        if (monthData) monthData.expected += o.totalPrice;
+      }
+      
+      if (['paid', 'delivered'].includes(o.status) && o.completedDate) {
+        const cDate = new Date(o.completedDate);
+        if (cDate.getFullYear() === year) {
+          const monthData = dataPoints.find(dp => dp.monthNum === (cDate.getMonth() + 1));
+          if (monthData) monthData.realized += o.totalPrice;
         }
       }
     });
@@ -1183,22 +1203,29 @@ function drawRevenueTrendChart(filteredOrders) {
       dataPoints.push({
         dateStr: d.toISOString().split('T')[0],
         label: `${d.getDate()}/${d.getMonth() + 1}`,
-        revenue: 0
+        expected: 0,
+        realized: 0
       });
     }
 
     filteredOrders.forEach(o => {
-      if (['completed', 'delivered', 'paid'].includes(o.status) && o.completedDate) {
-        const orderDate = o.completedDate.split('T')[0];
-        const day = dataPoints.find(d => d.dateStr === orderDate);
-        if (day) {
-          day.revenue += o.totalPrice;
+      const rDateStr = o.receivedDate.split('T')[0];
+      const rDay = dataPoints.find(d => d.dateStr === rDateStr);
+      if (o.status !== 'cancelled' && rDay) {
+        rDay.expected += o.totalPrice;
+      }
+      
+      if (['paid', 'delivered'].includes(o.status) && o.completedDate) {
+        const cDateStr = o.completedDate.split('T')[0];
+        const cDay = dataPoints.find(d => d.dateStr === cDateStr);
+        if (cDay) {
+          cDay.realized += o.totalPrice;
         }
       }
     });
   }
 
-  const maxRevenue = Math.max(...dataPoints.map(d => d.revenue), 100000); // min 100k scale
+  const maxRevenue = Math.max(...dataPoints.map(d => Math.max(d.expected, d.realized)), 100000); // min 100k scale
 
   // Draw Grid Lines & Labels
   ctx.strokeStyle = '#EADFD5';
@@ -1233,18 +1260,40 @@ function drawRevenueTrendChart(filteredOrders) {
     }
   });
 
-  // Plot line
-  ctx.strokeStyle = '#E89C19'; // Brand Gold
-  ctx.lineWidth = 3;
+  // 1. Plot expected line (dashed, muted)
+  ctx.strokeStyle = '#B8A89C'; // Muted grey/brown
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]); // dashed line for provisional/expected
   ctx.beginPath();
-
-  const points = dataPoints.map((d, idx) => {
+  
+  const expectedPoints = dataPoints.map((d, idx) => {
     const x = padding + pointSpacing * idx;
-    const y = height - padding - ((height - 2 * padding) * d.revenue) / maxRevenue;
+    const y = height - padding - ((height - 2 * padding) * d.expected) / maxRevenue;
     return { x, y };
   });
 
-  points.forEach((pt, idx) => {
+  expectedPoints.forEach((pt, idx) => {
+    if (idx === 0) {
+      ctx.moveTo(pt.x, pt.y);
+    } else {
+      ctx.lineTo(pt.x, pt.y);
+    }
+  });
+  ctx.stroke();
+  ctx.setLineDash([]); // Reset dashed line style
+
+  // 2. Plot realized line (solid, gold)
+  ctx.strokeStyle = '#E89C19'; // Brand Gold
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  
+  const realizedPoints = dataPoints.map((d, idx) => {
+    const x = padding + pointSpacing * idx;
+    const y = height - padding - ((height - 2 * padding) * d.realized) / maxRevenue;
+    return { x, y };
+  });
+
+  realizedPoints.forEach((pt, idx) => {
     if (idx === 0) {
       ctx.moveTo(pt.x, pt.y);
     } else {
@@ -1253,35 +1302,47 @@ function drawRevenueTrendChart(filteredOrders) {
   });
   ctx.stroke();
 
-  // Draw area gradient
+  // Draw area gradient for realized
   const gradient = ctx.createLinearGradient(0, padding, 0, height - padding);
-  gradient.addColorStop(0, 'rgba(232, 156, 25, 0.3)');
+  gradient.addColorStop(0, 'rgba(232, 156, 25, 0.25)');
   gradient.addColorStop(1, 'rgba(232, 156, 25, 0.0)');
   ctx.fillStyle = gradient;
   
   ctx.beginPath();
-  ctx.moveTo(points[0].x, height - padding);
-  points.forEach(pt => ctx.lineTo(pt.x, pt.y));
-  ctx.lineTo(points[points.length - 1].x, height - padding);
+  ctx.moveTo(realizedPoints[0].x, height - padding);
+  realizedPoints.forEach(pt => ctx.lineTo(pt.x, pt.y));
+  ctx.lineTo(realizedPoints[realizedPoints.length - 1].x, height - padding);
   ctx.closePath();
   ctx.fill();
 
   // Draw points circles if count <= 12
   if (pointsCount <= 12) {
+    // Expected circles
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#B8A89C';
+    ctx.lineWidth = 2;
+    expectedPoints.forEach((pt) => {
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+
+    // Realized circles & labels
     ctx.fillStyle = '#4A3728';
     ctx.strokeStyle = '#E89C19';
     ctx.lineWidth = 2;
 
-    points.forEach((pt, idx) => {
+    realizedPoints.forEach((pt, idx) => {
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
-      if (dataPoints[idx].revenue > 0) {
+      if (dataPoints[idx].realized > 0) {
         ctx.fillStyle = '#2C2018';
         ctx.font = 'bold 9px Montserrat';
-        ctx.fillText(formatVND(dataPoints[idx].revenue).replace('₫', '').trim(), pt.x, pt.y - 12);
+        ctx.fillText(formatVND(dataPoints[idx].realized).replace('₫', '').trim(), pt.x, pt.y - 12);
       }
     });
   }

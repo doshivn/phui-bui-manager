@@ -145,7 +145,7 @@
               <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
             </div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card stat-processing">
             <div class="stat-info">
               <h3>Đang xử lý</h3>
               <div class="stat-value" id="stat-active-orders">0</div>
@@ -154,7 +154,7 @@
               <svg viewBox="0 0 24 24" fill="var(--status-processing-text)"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
             </div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card stat-completed">
             <div class="stat-info">
               <h3>Đã hoàn thành</h3>
               <div class="stat-value" id="stat-completed-orders">0</div>
@@ -163,13 +163,22 @@
               <svg viewBox="0 0 24 24" fill="var(--status-completed-text)"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
             </div>
           </div>
-          <div class="stat-card" style="border-left-color: var(--color-brand-gold);">
+          <div class="stat-card stat-revenue-expected">
             <div class="stat-info">
-              <h3>Tổng doanh thu</h3>
-              <div class="stat-value" id="stat-revenue" style="font-size: 1.45rem;">0đ</div>
+              <h3>Doanh thu tạm tính</h3>
+              <div class="stat-value" id="stat-revenue-expected" style="font-size: 1.35rem;">0đ</div>
             </div>
             <div class="stat-icon">
-              <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/></svg>
+              <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+            </div>
+          </div>
+          <div class="stat-card stat-revenue-realized">
+            <div class="stat-info">
+              <h3>Doanh thu thực nhận</h3>
+              <div class="stat-value" id="stat-revenue-realized" style="font-size: 1.35rem; color: var(--status-completed-text);">0đ</div>
+            </div>
+            <div class="stat-icon" style="background-color: var(--status-completed-bg);">
+              <svg viewBox="0 0 24 24" fill="var(--status-completed-text)"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.68v-1.92c-1.94-.28-3.57-1.49-3.73-3.48h2.09c.12.96.99 1.54 1.64 1.54.91 0 1.62-.51 1.62-1.39 0-1-.61-1.36-2.09-1.84-1.98-.64-3.58-1.47-3.58-3.69 0-1.82 1.39-3.13 3.32-3.44V4h2.68v1.9c1.62.24 3.01 1.34 3.26 3.19h-2.06c-.22-.84-.81-1.33-1.55-1.33-.86 0-1.42.49-1.42 1.15 0 .84.58 1.19 1.99 1.69 2.11.75 3.68 1.56 3.68 3.82 0 1.91-1.41 3.23-3.67 3.51z" fill="currentColor"/></svg>
             </div>
           </div>
         </div>
@@ -177,8 +186,12 @@
         <!-- Canvas charts grid -->
         <div class="chart-grid">
           <div class="chart-card">
-            <div class="chart-header">
-              <h3>Doanh Thu 7 Ngày Gần Nhất</h3>
+            <div class="chart-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+              <h3>Xu Hướng Doanh Thu</h3>
+              <div style="display: flex; gap: 12px; font-size: 0.8rem; font-weight: 600;">
+                <span style="color: #B8A89C;"><span style="display: inline-block; width: 12px; height: 2px; border-bottom: 2px dashed #B8A89C; margin-right: 4px; vertical-align: middle;"></span>Tạm tính</span>
+                <span style="color: #E89C19;"><span style="display: inline-block; width: 12px; height: 2px; background-color: #E89C19; margin-right: 4px; vertical-align: middle;"></span>Thực nhận</span>
+              </div>
             </div>
             <div class="canvas-container">
               <canvas id="chart-revenue"></canvas>

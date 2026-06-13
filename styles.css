@@ -464,6 +464,19 @@ body {
   background-color: var(--color-brand-gold);
 }
 
+.stat-card.stat-processing::before {
+  background-color: var(--status-processing-text);
+}
+.stat-card.stat-completed::before {
+  background-color: var(--status-completed-text);
+}
+.stat-card.stat-revenue-expected::before {
+  background-color: var(--color-brand-gold);
+}
+.stat-card.stat-revenue-realized::before {
+  background-color: var(--status-completed-text);
+}
+
 .stat-info h3 {
   font-size: 0.85rem;
   text-transform: uppercase;
