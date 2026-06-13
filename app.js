@@ -44,14 +44,7 @@ async function initData() {
 
       // 3. Load orders
       const ordersSnap = await window.db.collection('orders').get();
-      if (ordersSnap.empty) {
-        for (let o of window.INITIAL_ORDERS || []) {
-          await window.db.collection('orders').doc(o.id).set(o);
-        }
-        state.orders = window.INITIAL_ORDERS || [];
-      } else {
-        state.orders = ordersSnap.docs.map(doc => doc.data());
-      }
+      state.orders = ordersSnap.docs.map(doc => doc.data());
       localStorage.setItem('pb_orders', JSON.stringify(state.orders));
       
     } catch (error) {
@@ -97,28 +90,9 @@ function loadFromLocalStorage() {
 }
 
 // Sync helper that updates LocalStorage instantly and uploads to Firebase asynchronously
-async function saveState(key, data) {
-  // Update local storage instantly for high responsiveness
+// Sync helper that updates LocalStorage instantly
+function saveState(key, data) {
   localStorage.setItem(key, JSON.stringify(data));
-
-  // Sync to Firebase Cloud if initialized
-  if (window.db) {
-    let collectionName = '';
-    if (key === 'pb_orders') collectionName = 'orders';
-    else if (key === 'pb_services') collectionName = 'services';
-    else if (key === 'pb_users') collectionName = 'users';
-    
-    if (collectionName) {
-      try {
-        for (let item of data) {
-          await window.db.collection(collectionName).doc(item.id).set(item);
-        }
-        console.log(`Successfully synced ${collectionName} to Firebase Cloud.`);
-      } catch (error) {
-        console.error(`Firebase sync failed for ${collectionName}:`, error);
-      }
-    }
-  }
 }
 
 // 2. SPA ROUTER & NAVIGATION
@@ -485,6 +459,8 @@ function handleOrderSubmit(e) {
     return;
   }
 
+  let orderToSync = null;
+
   if (state.currentEditingOrder) {
     // Edit
     const order = state.orders.find(o => o.id === state.currentEditingOrder.id);
@@ -505,6 +481,7 @@ function handleOrderSubmit(e) {
       }
     }
 
+    orderToSync = order;
     alert(`Cập nhật đơn hàng ${order.id} thành công!`);
   } else {
     // Create new
@@ -537,10 +514,19 @@ function handleOrderSubmit(e) {
     };
 
     state.orders.push(newOrder);
+    orderToSync = newOrder;
     alert(`Tạo đơn hàng ${orderId} thành công!`);
   }
 
   saveState('pb_orders', state.orders);
+
+  // Sync specific order to Firebase Cloud
+  if (window.db && orderToSync) {
+    window.db.collection('orders').doc(orderToSync.id).set(orderToSync)
+      .then(() => console.log(`Synced order ${orderToSync.id} to Firebase.`))
+      .catch(err => console.error("Error syncing order to Firebase:", err));
+  }
+
   closeOrderModal();
   renderOrders();
 }
@@ -676,6 +662,14 @@ function quickPayOrderLogic(orderId) {
     order.status = 'paid';
     order.completedDate = new Date().toISOString();
     saveState('pb_orders', state.orders);
+
+    // Sync status change to Firebase Cloud
+    if (window.db) {
+      window.db.collection('orders').doc(orderId).set(order)
+        .then(() => console.log(`Paid status for order ${orderId} synced to Firebase.`))
+        .catch(err => console.error("Error syncing order to Firebase:", err));
+    }
+
     renderOrders();
     if (state.activeView === 'dashboard') {
       renderDashboard();
@@ -745,26 +739,39 @@ function handleServiceSubmit(e) {
   const price = parseInt(document.getElementById('service-price').value) || 0;
   const range = document.getElementById('service-range').value.trim();
 
+  let serviceToSync = null;
+
   if (state.currentEditingService) {
     const s = state.services.find(serv => serv.id === state.currentEditingService.id);
     s.name = name;
     s.category = category;
     s.defaultPrice = price;
     s.priceRange = range || `${formatVND(price)}`;
+    serviceToSync = s;
     alert('Cập nhật dịch vụ thành công!');
   } else {
     const id = 's-' + Date.now();
-    state.services.push({
+    const newService = {
       id: id,
       name: name,
       category: category,
       defaultPrice: price,
       priceRange: range || `${formatVND(price)}`
-    });
+    };
+    state.services.push(newService);
+    serviceToSync = newService;
     alert('Thêm dịch vụ mới thành công!');
   }
 
   saveState('pb_services', state.services);
+
+  // Sync service to Firebase Cloud
+  if (window.db && serviceToSync) {
+    window.db.collection('services').doc(serviceToSync.id).set(serviceToSync)
+      .then(() => console.log(`Synced service ${serviceToSync.id} to Firebase.`))
+      .catch(err => console.error("Error syncing service to Firebase:", err));
+  }
+
   closeServiceModal();
   renderServicesList();
 }
@@ -857,6 +864,8 @@ function handleEmployeeSubmit(e) {
   const password = document.getElementById('emp-password').value;
   const role = document.getElementById('emp-role').value;
 
+  let employeeToSync = null;
+
   if (state.currentEditingEmployee) {
     // Editing
     const isEmailTaken = state.users.some(u => u.email === email && u.id !== state.currentEditingEmployee.id);
@@ -882,6 +891,7 @@ function handleEmployeeSubmit(e) {
       updateProfileUI();
     }
 
+    employeeToSync = u;
     alert('Cập nhật tài khoản thành công!');
   } else {
     // Creating
@@ -890,20 +900,29 @@ function handleEmployeeSubmit(e) {
       return;
     }
 
-    state.users.push({
+    const newEmp = {
       id: 'u-' + Date.now(),
       name: name,
       email: email,
       password: password,
       role: role
-    });
+    };
+    state.users.push(newEmp);
+    employeeToSync = newEmp;
     alert('Thêm tài khoản nhân viên thành công!');
   }
 
   saveState('pb_users', state.users);
+
+  // Sync employee to Firebase Cloud
+  if (window.db && employeeToSync) {
+    window.db.collection('users').doc(employeeToSync.id).set(employeeToSync)
+      .then(() => console.log(`Synced user ${employeeToSync.id} to Firebase.`))
+      .catch(err => console.error("Error syncing user to Firebase:", err));
+  }
+
   closeEmployeeModal();
   renderEmployeesList();
-  alert('Thêm tài khoản nhân viên thành công!');
 }
 
 function deleteEmployee(userId) {
