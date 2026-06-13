@@ -1352,6 +1352,31 @@ function drawPopularServicesChart(filteredOrders) {
 
 // 9. WINDOWS / EVENT HANDLERS INIT
 window.addEventListener('DOMContentLoaded', () => {
+  // Set default dashboard filters to current month and year
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const currentYear = now.getFullYear();
+
+  const dbMonthSelect = document.getElementById('db-filter-month');
+  const dbYearSelect = document.getElementById('db-filter-year');
+  if (dbMonthSelect) dbMonthSelect.value = currentMonth.toString();
+  if (dbYearSelect) {
+    let optionExists = false;
+    for (let i = 0; i < dbYearSelect.options.length; i++) {
+      if (dbYearSelect.options[i].value === currentYear.toString()) {
+        optionExists = true;
+        break;
+      }
+    }
+    if (!optionExists) {
+      const opt = document.createElement('option');
+      opt.value = currentYear.toString();
+      opt.textContent = currentYear.toString();
+      dbYearSelect.appendChild(opt);
+    }
+    dbYearSelect.value = currentYear.toString();
+  }
+
   initData();
   
   // Navigation listeners
@@ -1403,8 +1428,8 @@ window.addEventListener('DOMContentLoaded', () => {
   // Reset dashboard filters
   document.getElementById('btn-reset-db-filters').addEventListener('click', () => {
     document.getElementById('db-filter-date').value = '';
-    document.getElementById('db-filter-month').value = 'all';
-    document.getElementById('db-filter-year').value = 'all';
+    document.getElementById('db-filter-month').value = currentMonth.toString();
+    document.getElementById('db-filter-year').value = currentYear.toString();
     renderDashboard();
   });
 
