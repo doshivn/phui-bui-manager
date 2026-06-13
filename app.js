@@ -344,11 +344,11 @@ function populateServiceSelector(selectedServices = []) {
     const existingSelect = selectedServices.find(selected => selected.id === s.id);
     const isChecked = !!existingSelect;
     const quantity = existingSelect ? (existingSelect.quantity || 1) : 1;
+    const price = existingSelect ? (existingSelect.price || s.defaultPrice) : s.defaultPrice;
 
     const div = document.createElement('div');
     div.className = `service-select-item ${isChecked ? 'selected' : ''}`;
     div.setAttribute('data-id', s.id);
-    div.setAttribute('data-price', s.defaultPrice);
     div.setAttribute('data-name', s.name);
     
     div.innerHTML = `
@@ -361,7 +361,16 @@ function populateServiceSelector(selectedServices = []) {
           <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 700;">Đôi:</span>
           <input type="number" class="service-qty-input" value="${quantity}" min="1">
         </div>
-        <span class="service-select-price">${formatVND(s.defaultPrice)}</span>
+        
+        <div style="display: flex; align-items: center;">
+          <span class="service-select-price-static">${formatVND(price)}</span>
+          
+          <div class="service-price-control" onclick="event.stopPropagation()">
+            <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 700;">Giá:</span>
+            <input type="number" class="service-price-input" value="${price}" min="0">
+            <span style="font-size: 0.75rem; font-weight: 700; color: var(--color-brand-brown);">đ</span>
+          </div>
+        </div>
       </div>
     `;
 
@@ -376,6 +385,16 @@ function populateServiceSelector(selectedServices = []) {
     qtyInput.addEventListener('click', (e) => e.stopPropagation());
     qtyInput.addEventListener('keyup', (e) => e.stopPropagation());
 
+    const priceInput = div.querySelector('.service-price-input');
+    priceInput.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value) || 0;
+      div.querySelector('.service-select-price-static').textContent = formatVND(val);
+      calculateOrderFormTotal();
+    });
+    priceInput.addEventListener('change', calculateOrderFormTotal);
+    priceInput.addEventListener('click', (e) => e.stopPropagation());
+    priceInput.addEventListener('keyup', (e) => e.stopPropagation());
+
     container.appendChild(div);
   });
 }
@@ -383,7 +402,8 @@ function populateServiceSelector(selectedServices = []) {
 function calculateOrderFormTotal() {
   let total = 0;
   document.querySelectorAll('#form-services-selector .service-select-item.selected').forEach(item => {
-    const price = parseInt(item.getAttribute('data-price')) || 0;
+    const priceInput = item.querySelector('.service-price-input');
+    const price = parseInt(priceInput.value) || 0;
     const qtyInput = item.querySelector('.service-qty-input');
     const qty = parseInt(qtyInput.value) || 1;
     total += price * qty;
@@ -446,10 +466,12 @@ function handleOrderSubmit(e) {
   document.querySelectorAll('#form-services-selector .service-select-item.selected').forEach(item => {
     const qtyInput = item.querySelector('.service-qty-input');
     const qty = parseInt(qtyInput.value) || 1;
+    const priceInput = item.querySelector('.service-price-input');
+    const price = parseInt(priceInput.value) || 0;
     selectedServices.push({
       id: item.getAttribute('data-id'),
       name: item.getAttribute('data-name'),
-      price: parseInt(item.getAttribute('data-price')),
+      price: price,
       quantity: qty
     });
   });
