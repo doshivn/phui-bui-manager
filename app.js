@@ -258,7 +258,7 @@ function renderOrders() {
       o.customerName.toLowerCase().includes(searchTerm) || 
       o.customerPhone.includes(searchTerm) ||
       o.id.toLowerCase().includes(searchTerm) ||
-      o.shoeInfo.toLowerCase().includes(searchTerm)
+      (o.shoeInfo || '').toLowerCase().includes(searchTerm)
     );
   }
 
@@ -304,7 +304,7 @@ function renderOrders() {
         </div>
       </td>
       <td>
-        <div style="font-weight: 600;">${o.shoeInfo}</div>
+        <div style="font-weight: 600;">${o.shoeInfo || '-'}</div>
         <div style="font-size: 0.8rem; color: var(--text-light); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 200px;">${servicesText}</div>
       </td>
       <td style="font-weight: 700; color: var(--color-brand-gold);">${formatVND(o.totalPrice)}</td>
@@ -573,7 +573,7 @@ function viewOrderDetail(orderId) {
 
   document.getElementById('det-cust-name').textContent = order.customerName;
   document.getElementById('det-cust-phone').textContent = order.customerPhone;
-  document.getElementById('det-shoe-info').textContent = order.shoeInfo;
+  document.getElementById('det-shoe-info').textContent = order.shoeInfo || '-';
   document.getElementById('det-received-date').textContent = formatDateTime(order.receivedDate);
   document.getElementById('det-completed-date').textContent = formatDateTime(order.completedDate);
   document.getElementById('det-staff').textContent = order.staffName || 'Chưa phân công';
@@ -599,7 +599,7 @@ function viewOrderDetail(orderId) {
   document.getElementById('print-date').textContent = formatDateTime(new Date());
   document.getElementById('print-cust-name').textContent = order.customerName;
   document.getElementById('print-cust-phone').textContent = order.customerPhone;
-  document.getElementById('print-shoe-info').textContent = order.shoeInfo;
+  document.getElementById('print-shoe-info').textContent = order.shoeInfo || '-';
   document.getElementById('print-notes').textContent = order.notes || 'Không có';
   
   const printTableBody = document.getElementById('print-services-body');
@@ -1038,7 +1038,7 @@ function viewCustomerDetail(phone) {
     tr.innerHTML = `
       <td style="font-weight: 700; color: var(--color-brand-brown-dark);">${o.id}</td>
       <td>
-        <div style="font-weight: 600;">${o.shoeInfo}</div>
+        <div style="font-weight: 600;">${o.shoeInfo || '-'}</div>
         <div style="font-size: 0.8rem; color: var(--text-light);">${o.services.map(s => s.name).join(', ')}</div>
       </td>
       <td style="font-weight: 700; color: var(--color-brand-gold);">${formatVND(o.totalPrice)}</td>
