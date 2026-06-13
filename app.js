@@ -556,6 +556,14 @@ function deleteOrder(orderId) {
   if (confirm(`Bạn có chắc chắn muốn xóa đơn hàng ${orderId}?`)) {
     state.orders = state.orders.filter(o => o.id !== orderId);
     saveState('pb_orders', state.orders);
+    
+    // Delete from Firebase Cloud
+    if (window.db) {
+      window.db.collection('orders').doc(orderId).delete()
+        .then(() => console.log(`Deleted order ${orderId} from Firebase Cloud.`))
+        .catch(err => console.error("Error deleting order from Firebase:", err));
+    }
+    
     renderOrders();
   }
 }
@@ -772,6 +780,14 @@ function deleteService(serviceId) {
   if (confirm('Bạn có chắc muốn xóa dịch vụ này? Sẽ không ảnh hưởng đến đơn hàng cũ.')) {
     state.services = state.services.filter(s => s.id !== serviceId);
     saveState('pb_services', state.services);
+    
+    // Delete from Firebase Cloud
+    if (window.db) {
+      window.db.collection('services').doc(serviceId).delete()
+        .then(() => console.log(`Deleted service ${serviceId} from Firebase Cloud.`))
+        .catch(err => console.error("Error deleting service from Firebase:", err));
+    }
+    
     renderServicesList();
   }
 }
@@ -901,6 +917,14 @@ function deleteEmployee(userId) {
   if (confirm('Bạn có chắc chắn muốn xóa tài khoản này?')) {
     state.users = state.users.filter(u => u.id !== userId);
     saveState('pb_users', state.users);
+    
+    // Delete from Firebase Cloud
+    if (window.db) {
+      window.db.collection('users').doc(userId).delete()
+        .then(() => console.log(`Deleted user ${userId} from Firebase Cloud.`))
+        .catch(err => console.error("Error deleting user from Firebase:", err));
+    }
+    
     renderEmployeesList();
   }
 }
