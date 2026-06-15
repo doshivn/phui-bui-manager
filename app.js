@@ -57,6 +57,16 @@ async function initData() {
 
 
 
+  // Check for public tracking query parameter ?order=ID
+  const urlParams = new URLSearchParams(window.location.search);
+  const orderIdParam = urlParams.get('order');
+  if (orderIdParam) {
+    // Switch view to public tracking and load details
+    switchView('public-tracking');
+    loadPublicTracking(orderIdParam);
+    return;
+  }
+
   // Check login state
   const savedUser = localStorage.getItem('pb_current_user');
   if (savedUser) {
@@ -98,7 +108,7 @@ function saveState(key, data) {
 // 2. SPA ROUTER & NAVIGATION
 function switchView(viewId) {
   // Access control
-  if (viewId !== 'login' && !state.currentUser) {
+  if (viewId !== 'login' && viewId !== 'public-tracking' && !state.currentUser) {
     viewId = 'login';
   }
   
@@ -314,6 +324,9 @@ function renderOrders() {
         <div class="action-buttons">
           <button class="action-btn edit" onclick="viewOrderDetail('${o.id}')" title="Xem chi tiết & In hóa đơn">
             <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+          </button>
+          <button class="action-btn edit" onclick="copyTrackingLink('${o.id}')" title="Sao chép link tra cứu">
+            <svg viewBox="0 0 24 24" style="color: var(--color-brand-gold);"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/></svg>
           </button>
           <button class="action-btn edit" onclick="openOrderModal('${o.id}')" title="Chỉnh sửa đơn hàng">
             <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
@@ -1523,3 +1536,243 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+// 10. PUBLIC ORDER TRACKING & TOAST FUNCTIONS
+async function loadPublicTracking(orderId) {
+  const trackingContainer = document.getElementById('view-public-tracking');
+  if (!trackingContainer) return;
+  
+  document.getElementById('track-order-id').textContent = orderId;
+  
+  let order = null;
+  
+  if (window.db) {
+    try {
+      const doc = await window.db.collection('orders').doc(orderId).get();
+      if (doc.exists) {
+        order = doc.data();
+      }
+    } catch (error) {
+      console.error("Error fetching order from Firestore for tracking:", error);
+    }
+  }
+  
+  // Fallback to LocalStorage / State if offline or not found
+  if (!order) {
+    if (state.orders.length === 0) {
+      loadFromLocalStorage();
+    }
+    order = state.orders.find(o => o.id.toLowerCase() === orderId.toLowerCase());
+  }
+  
+  if (!order) {
+    displayTrackingError(orderId, "Không tìm thấy đơn hàng này trên hệ thống. Vui lòng kiểm tra lại mã đơn hàng hoặc liên hệ hotline để được hỗ trợ.");
+    return;
+  }
+  
+  renderTrackingInfo(order);
+}
+
+function displayTrackingError(orderId, message) {
+  const card = document.querySelector('#view-public-tracking .tracking-card');
+  if (!card) return;
+  
+  card.innerHTML = `
+    <div class="tracking-header">
+      <div class="brand-logo">
+        <h1>SPA GIÀY</h1>
+        <p>SHOE SPA & REPAIR</p>
+      </div>
+      <div class="tracking-title-block">
+        <h2>TRA CỨU TIẾN ĐỘ ĐƠN HÀNG</h2>
+        <p>Mã đơn hàng: <span style="font-weight: 700; color: var(--status-cancelled-text);">${orderId}</span></p>
+      </div>
+    </div>
+    
+    <div class="text-center" style="padding: 40px 20px;">
+      <svg viewBox="0 0 24 24" style="width: 64px; height: 64px; fill: var(--status-cancelled-text); margin-bottom: 16px;">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+      </svg>
+      <h3 style="color: var(--color-brand-brown-dark); margin-bottom: 8px; font-weight: 700;">Không tìm thấy thông tin</h3>
+      <p style="color: var(--text-secondary); margin-bottom: 24px; max-width: 400px; margin-left: auto; margin-right: auto;">${message}</p>
+      <div style="display: flex; justify-content: center; gap: 12px;">
+        <a href="tel:0906227512" class="btn btn-primary">Gọi Hotline Hỗ Trợ</a>
+        <a href="https://zalo.me/0906227512" target="_blank" class="btn btn-secondary">Nhắn Zalo Shop</a>
+      </div>
+    </div>
+  `;
+}
+
+function renderTrackingInfo(order) {
+  document.getElementById('track-order-id').textContent = order.id;
+  document.getElementById('track-cust-name').textContent = order.customerName;
+  
+  // Mask customer phone for security/privacy
+  const rawPhone = order.customerPhone || '';
+  let maskedPhone = rawPhone;
+  if (rawPhone.length >= 8) {
+    maskedPhone = rawPhone.substring(0, 4) + ' ••• ' + rawPhone.substring(rawPhone.length - 3);
+  }
+  document.getElementById('track-cust-phone').textContent = maskedPhone;
+  
+  document.getElementById('track-shoe-info').textContent = order.shoeInfo || 'Không có ghi chú model';
+  document.getElementById('track-received-date').textContent = formatDateTime(order.receivedDate);
+  document.getElementById('track-notes').textContent = order.notes || 'Không có ghi chú thêm.';
+  document.getElementById('track-total-price').textContent = formatVND(order.totalPrice);
+  
+  // Populate services
+  const servicesList = document.getElementById('track-services-list');
+  servicesList.innerHTML = '';
+  order.services.forEach(s => {
+    const qty = s.quantity || 1;
+    const li = document.createElement('li');
+    li.innerHTML = `
+      <span>${s.name} ${qty > 1 ? `<span style="color: var(--text-light); font-weight: 500;">(x${qty})</span>` : ''}</span>
+      <span style="font-weight: 600;">${formatVND(s.price * qty)}</span>
+    `;
+    servicesList.appendChild(li);
+  });
+  
+  // Stepper timeline
+  const stepPending = document.getElementById('step-pending');
+  const stepProcessing = document.getElementById('step-processing');
+  const stepCompleted = document.getElementById('step-completed');
+  const stepDelivered = document.getElementById('step-delivered');
+  
+  const line1 = document.getElementById('line-1');
+  const line2 = document.getElementById('line-2');
+  const line3 = document.getElementById('line-3');
+  
+  const cancelledBanner = document.getElementById('track-cancelled-banner');
+  const stepperContainer = document.querySelector('.tracking-stepper-container');
+  
+  // Reset
+  [stepPending, stepProcessing, stepCompleted, stepDelivered].forEach(node => {
+    node.classList.remove('active', 'completed');
+  });
+  [line1, line2, line3].forEach(line => {
+    line.classList.remove('completed');
+  });
+  
+  let statusText = 'Chờ xử lý';
+  let badgeClass = 'badge-pending';
+  
+  if (order.status === 'cancelled') {
+    statusText = 'Đã hủy';
+    badgeClass = 'badge-cancelled';
+    cancelledBanner.style.display = 'flex';
+    stepperContainer.style.display = 'none';
+  } else {
+    cancelledBanner.style.display = 'none';
+    stepperContainer.style.display = 'block';
+    
+    // Steps: 1: pending, 2: processing, 3: completed/paid, 4: delivered
+    if (order.status === 'pending') {
+      statusText = 'Chờ xử lý';
+      badgeClass = 'badge-pending';
+      stepPending.classList.add('active');
+    } else if (order.status === 'processing') {
+      statusText = 'Đang tiến hành';
+      badgeClass = 'badge-processing';
+      
+      stepPending.classList.add('completed');
+      line1.classList.add('completed');
+      stepProcessing.classList.add('active');
+    } else if (order.status === 'completed') {
+      statusText = 'Đã hoàn thành';
+      badgeClass = 'badge-completed';
+      
+      stepPending.classList.add('completed');
+      line1.classList.add('completed');
+      stepProcessing.classList.add('completed');
+      line2.classList.add('completed');
+      stepCompleted.classList.add('active');
+    } else if (order.status === 'paid') {
+      statusText = 'Đã thanh toán (Chờ nhận)';
+      badgeClass = 'badge-paid';
+      
+      stepPending.classList.add('completed');
+      line1.classList.add('completed');
+      stepProcessing.classList.add('completed');
+      line2.classList.add('completed');
+      stepCompleted.classList.add('active');
+    } else if (order.status === 'delivered') {
+      statusText = 'Đã giao khách';
+      badgeClass = 'badge-delivered';
+      
+      stepPending.classList.add('completed');
+      line1.classList.add('completed');
+      stepProcessing.classList.add('completed');
+      line2.classList.add('completed');
+      stepCompleted.classList.add('completed');
+      line3.classList.add('completed');
+      stepDelivered.classList.add('active');
+    }
+  }
+  
+  const statusBadge = document.getElementById('track-status-badge');
+  statusBadge.textContent = statusText;
+  statusBadge.className = `badge ${badgeClass}`;
+}
+
+function copyTrackingLink(orderId) {
+  if (!orderId) return;
+  
+  const url = `${window.location.origin}${window.location.pathname}?order=${orderId}`;
+  
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url)
+      .then(() => {
+        showToast(`Đã sao chép link tra cứu đơn hàng ${orderId}!`);
+      })
+      .catch(err => {
+        console.error('Failed to copy text using Clipboard API:', err);
+        fallbackCopyText(url, orderId);
+      });
+  } else {
+    fallbackCopyText(url, orderId);
+  }
+}
+
+function fallbackCopyText(text, orderId) {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.top = "0";
+  textArea.style.left = "0";
+  textArea.style.position = "fixed";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  
+  try {
+    const successful = document.execCommand('copy');
+    if (successful) {
+      showToast(`Đã sao chép link tra cứu đơn hàng ${orderId}!`);
+    } else {
+      alert(`Link tra cứu của bạn: ${text}`);
+    }
+  } catch (err) {
+    console.error('Fallback copy text failed:', err);
+    alert(`Link tra cứu của bạn: ${text}`);
+  }
+  
+  document.body.removeChild(textArea);
+}
+
+function showToast(message) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.innerHTML = `
+    <svg viewBox="0 0 24 24" style="width: 18px; height: 18px; fill: var(--color-brand-gold);"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="currentColor"/></svg>
+    <span>${message}</span>
+  `;
+  
+  container.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.remove();
+  }, 3000);
+}
