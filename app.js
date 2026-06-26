@@ -9,7 +9,9 @@ const state = {
   activeView: 'login',
   currentEditingOrder: null,
   currentEditingService: null,
-  currentEditingEmployee: null
+  currentEditingEmployee: null,
+  tempSelectedFiles: [], // temporary selected files for upload [{id, file, previewUrl}]
+  tempExistingImages: [] // existing images kept when editing [{url}]
 };
 
 // Initialize app data from Firebase Cloud or LocalStorage fallback
@@ -305,6 +307,10 @@ function renderOrders() {
 
     const servicesText = o.services.map(s => `${s.name}${s.quantity > 1 ? ` (x${s.quantity})` : ''}`).join(', ');
 
+    const firstImageHtml = o.images && o.images.length > 0 
+      ? `<img src="${o.images[0]}" class="table-shoe-thumb" onclick="openLightbox('${o.images[0]}'); event.stopPropagation();" title="Xem ảnh lớn">` 
+      : `<div class="table-shoe-thumb-placeholder" title="Chưa có ảnh"><svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" fill="currentColor"/></svg></div>`;
+
     tr.innerHTML = `
       <td style="font-weight: 700; color: var(--color-brand-brown-dark);">${o.id}</td>
       <td>
@@ -314,8 +320,13 @@ function renderOrders() {
         </div>
       </td>
       <td>
-        <div style="font-weight: 600;">${o.shoeInfo || '-'}</div>
-        <div style="font-size: 0.8rem; color: var(--text-light); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 200px;">${servicesText}</div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          ${firstImageHtml}
+          <div style="overflow: hidden;">
+            <div style="font-weight: 600; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 150px;">${o.shoeInfo || '-'}</div>
+            <div style="font-size: 0.8rem; color: var(--text-light); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 150px;">${servicesText}</div>
+          </div>
+        </div>
       </td>
       <td style="font-weight: 700; color: var(--color-brand-gold);">${formatVND(o.totalPrice)}</td>
       <td style="font-size: 0.85rem; color: var(--text-secondary);">${formatDateTime(o.receivedDate)}</td>
@@ -431,6 +442,12 @@ function openOrderModal(orderId = null) {
   
   form.reset();
   state.currentEditingOrder = null;
+  
+  // Reset temporary image arrays
+  state.tempSelectedFiles = [];
+  state.tempExistingImages = [];
+  const progressContainer = document.getElementById('upload-progress-container');
+  if (progressContainer) progressContainer.style.display = 'none';
 
   if (orderId) {
     // Edit Order
@@ -445,6 +462,9 @@ function openOrderModal(orderId = null) {
     document.getElementById('order-status').value = state.currentEditingOrder.status;
     document.getElementById('order-total-price').value = state.currentEditingOrder.totalPrice;
     
+    // Load existing images
+    state.tempExistingImages = [...(state.currentEditingOrder.images || [])];
+    
     // Status selection visibility
     document.getElementById('status-form-group').style.display = 'block';
     
@@ -458,14 +478,21 @@ function openOrderModal(orderId = null) {
     populateServiceSelector([]);
   }
 
+  renderOrderFormImagesPreview();
   modal.classList.add('active');
 }
 
 function closeOrderModal() {
+  // Revoke preview object URLs to free memory
+  state.tempSelectedFiles.forEach(item => {
+    URL.revokeObjectURL(item.previewUrl);
+  });
+  state.tempSelectedFiles = [];
+  state.tempExistingImages = [];
   document.getElementById('order-modal').classList.remove('active');
 }
 
-function handleOrderSubmit(e) {
+async function handleOrderSubmit(e) {
   e.preventDefault();
   
   const custName = document.getElementById('order-cust-name').value.trim();
@@ -494,6 +521,88 @@ function handleOrderSubmit(e) {
     return;
   }
 
+  // 1. Generate or retrieve Order ID for image uploading path
+  let orderId = state.currentEditingOrder ? state.currentEditingOrder.id : null;
+  if (!orderId) {
+    let nextNum = 1001;
+    if (state.orders.length > 0) {
+      const numbers = state.orders.map(o => parseInt(o.id.replace('PB-', ''))).filter(n => !isNaN(n));
+      if (numbers.length > 0) {
+        nextNum = Math.max(...numbers) + 1;
+      }
+    }
+    orderId = `PB-${nextNum}`;
+  }
+
+  // 2. Perform sequential image compression and uploads
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const originalBtnText = submitBtn.innerHTML;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<span style="display:inline-block; animation: spin 1s linear infinite; margin-right:6px;">⏳</span>Đang chuẩn bị ảnh...`;
+
+  const progressContainer = document.getElementById('upload-progress-container');
+  const progressFill = document.getElementById('upload-progress-fill');
+  const progressText = document.getElementById('upload-progress-text');
+
+  const uploadedImageUrls = [...state.tempExistingImages];
+  const totalFiles = state.tempSelectedFiles.length;
+
+  if (totalFiles > 0) {
+    if (progressContainer) {
+      progressContainer.style.display = 'block';
+      progressFill.style.width = '0%';
+      progressText.textContent = '0%';
+    }
+
+    for (let i = 0; i < totalFiles; i++) {
+      const tempItem = state.tempSelectedFiles[i];
+      submitBtn.innerHTML = `Đang tải ảnh ${i + 1}/${totalFiles}...`;
+
+      try {
+        // Compress the image
+        const compressed = await compressImage(tempItem.file);
+        
+        if (window.storage) {
+          // Firebase Storage upload
+          const storageRef = window.storage.ref().child(`orders/${orderId}/${Date.now()}-${tempItem.file.name}`);
+          const uploadTask = storageRef.put(compressed);
+          
+          await new Promise((resolveUpload, rejectUpload) => {
+            uploadTask.on('state_changed', 
+              (snapshot) => {
+                const fileProgress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                const overallProgress = Math.round(((i / totalFiles) * 100) + (fileProgress / totalFiles));
+                if (progressFill) progressFill.style.width = `${overallProgress}%`;
+                if (progressText) progressText.textContent = `${overallProgress}%`;
+              }, 
+              (err) => {
+                console.error("Firebase Storage Upload Error:", err);
+                rejectUpload(err);
+              }, 
+              async () => {
+                const downloadUrl = await uploadTask.snapshot.ref.getDownloadURL();
+                uploadedImageUrls.push(downloadUrl);
+                resolveUpload();
+              }
+            );
+          });
+        } else {
+          // LocalStorage fallback (compressed Base64)
+          uploadedImageUrls.push(compressed);
+          const overallProgress = Math.round(((i + 1) / totalFiles) * 100);
+          if (progressFill) progressFill.style.width = `${overallProgress}%`;
+          if (progressText) progressText.textContent = `${overallProgress}%`;
+        }
+      } catch (err) {
+        console.error("Compression/Upload failed for file:", tempItem.file.name, err);
+      }
+    }
+  }
+
+  if (progressFill) progressFill.style.width = '100%';
+  if (progressText) progressText.textContent = '100%';
+  submitBtn.innerHTML = `Đang lưu đơn hàng...`;
+
   let orderToSync = null;
 
   if (state.currentEditingOrder) {
@@ -505,6 +614,7 @@ function handleOrderSubmit(e) {
     order.notes = notes;
     order.services = selectedServices;
     order.totalPrice = totalPrice;
+    order.images = uploadedImageUrls;
     
     const newStatus = document.getElementById('order-status').value;
     if (newStatus !== order.status) {
@@ -520,16 +630,6 @@ function handleOrderSubmit(e) {
     alert(`Cập nhật đơn hàng ${order.id} thành công!`);
   } else {
     // Create new
-    // Generate order ID: PB + number
-    let nextNum = 1001;
-    if (state.orders.length > 0) {
-      const numbers = state.orders.map(o => parseInt(o.id.replace('PB-', ''))).filter(n => !isNaN(n));
-      if (numbers.length > 0) {
-        nextNum = Math.max(...numbers) + 1;
-      }
-    }
-    const orderId = `PB-${nextNum}`;
-
     const statusVal = document.getElementById('order-status').value || 'pending';
     const isCompleted = ['completed', 'delivered', 'paid'].includes(statusVal);
 
@@ -542,6 +642,7 @@ function handleOrderSubmit(e) {
       totalPrice: totalPrice,
       status: statusVal,
       notes: notes,
+      images: uploadedImageUrls,
       receivedDate: new Date().toISOString(),
       completedDate: isCompleted ? new Date().toISOString() : null,
       staffId: state.currentUser.id,
@@ -561,6 +662,15 @@ function handleOrderSubmit(e) {
       .then(() => console.log(`Synced order ${orderToSync.id} to Firebase.`))
       .catch(err => console.error("Error syncing order to Firebase:", err));
   }
+
+  // Clear file references
+  state.tempSelectedFiles.forEach(item => URL.revokeObjectURL(item.previewUrl));
+  state.tempSelectedFiles = [];
+  state.tempExistingImages = [];
+
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = originalBtnText;
+  if (progressContainer) progressContainer.style.display = 'none';
 
   closeOrderModal();
   renderOrders();
@@ -665,6 +775,24 @@ function viewOrderDetail(orderId) {
 
   // Open modal
   document.getElementById('detail-modal').classList.add('active');
+
+  // Render detail gallery
+  const gallerySection = document.getElementById('det-gallery-section');
+  const galleryContainer = document.getElementById('det-images-gallery');
+  if (gallerySection && galleryContainer) {
+    if (order.images && order.images.length > 0) {
+      gallerySection.style.display = 'block';
+      galleryContainer.innerHTML = '';
+      order.images.forEach(url => {
+        const div = document.createElement('div');
+        div.className = 'detail-image-wrapper';
+        div.innerHTML = `<img src="${url}" class="detail-gallery-img" onclick="openLightbox('${url}')" title="Xem ảnh lớn">`;
+        galleryContainer.appendChild(div);
+      });
+    } else {
+      gallerySection.style.display = 'none';
+    }
+  }
 }
 
 function closeDetailModal() {
@@ -1713,6 +1841,142 @@ function renderTrackingInfo(order) {
   const statusBadge = document.getElementById('track-status-badge');
   statusBadge.textContent = statusText;
   statusBadge.className = `badge ${badgeClass}`;
+
+  // Render public tracking image gallery
+  const trackGalleryCard = document.getElementById('track-gallery-card');
+  const trackGalleryContainer = document.getElementById('track-images-gallery');
+  if (trackGalleryCard && trackGalleryContainer) {
+    if (order.images && order.images.length > 0) {
+      trackGalleryCard.style.display = 'block';
+      trackGalleryContainer.innerHTML = '';
+      order.images.forEach(url => {
+        const div = document.createElement('div');
+        div.className = 'detail-image-wrapper';
+        div.innerHTML = `<img src="${url}" class="detail-gallery-img" onclick="openLightbox('${url}')" title="Click để phóng to">`;
+        trackGalleryContainer.appendChild(div);
+      });
+    } else {
+      trackGalleryCard.style.display = 'none';
+    }
+  }
+}
+
+// Image Selection & Compression & Lightbox Helpers
+function handleOrderImagesSelect(e) {
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
+  
+  files.forEach(file => {
+    const previewUrl = URL.createObjectURL(file);
+    const tempId = 'temp-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    state.tempSelectedFiles.push({
+      id: tempId,
+      file: file,
+      previewUrl: previewUrl
+    });
+  });
+  
+  renderOrderFormImagesPreview();
+  e.target.value = '';
+}
+
+function renderOrderFormImagesPreview() {
+  const container = document.getElementById('order-images-preview-container');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  // Render existing images
+  state.tempExistingImages.forEach((url, index) => {
+    const div = document.createElement('div');
+    div.className = 'image-preview-item';
+    div.innerHTML = `
+      <img src="${url}">
+      <button type="button" class="image-preview-delete" onclick="deleteExistingOrderImage(${index})">&times;</button>
+    `;
+    container.appendChild(div);
+  });
+  
+  // Render new temporary selected images
+  state.tempSelectedFiles.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'image-preview-item';
+    div.innerHTML = `
+      <img src="${item.previewUrl}">
+      <button type="button" class="image-preview-delete" onclick="deleteTempOrderImage('${item.id}')">&times;</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function deleteExistingOrderImage(index) {
+  state.tempExistingImages.splice(index, 1);
+  renderOrderFormImagesPreview();
+}
+
+function deleteTempOrderImage(id) {
+  const index = state.tempSelectedFiles.findIndex(item => item.id === id);
+  if (index !== -1) {
+    URL.revokeObjectURL(state.tempSelectedFiles[index].previewUrl);
+    state.tempSelectedFiles.splice(index, 1);
+  }
+  renderOrderFormImagesPreview();
+}
+
+function compressImage(file, maxWidth = 1000, maxHeight = 1000, quality = 0.8) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        if (window.storage) {
+          canvas.toBlob((blob) => {
+            resolve(blob);
+          }, 'image/jpeg', quality);
+        } else {
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        }
+      };
+    };
+  });
+}
+
+function openLightbox(url) {
+  const modal = document.getElementById('lightbox-modal');
+  const img = document.getElementById('lightbox-img');
+  if (modal && img) {
+    img.src = url;
+    modal.classList.add('active');
+  }
+}
+
+function closeLightbox() {
+  const modal = document.getElementById('lightbox-modal');
+  if (modal) {
+    modal.classList.remove('active');
+  }
 }
 
 function copyTrackingLink(orderId) {
