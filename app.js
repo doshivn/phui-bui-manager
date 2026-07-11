@@ -104,7 +104,11 @@ function loadFromLocalStorage() {
 // Sync helper that updates LocalStorage instantly and uploads to Firebase asynchronously
 // Sync helper that updates LocalStorage instantly
 function saveState(key, data) {
-  localStorage.setItem(key, JSON.stringify(data));
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    console.error(`Error saving state for key "${key}" to localStorage:`, e);
+  }
 }
 
 // 2. SPA ROUTER & NAVIGATION
@@ -603,77 +607,88 @@ async function handleOrderSubmit(e) {
   if (progressText) progressText.textContent = '100%';
   submitBtn.innerHTML = `Đang lưu đơn hàng...`;
 
-  let orderToSync = null;
+  try {
+    let orderToSync = null;
 
-  if (state.currentEditingOrder) {
-    // Edit
-    const order = state.orders.find(o => o.id === state.currentEditingOrder.id);
-    order.customerName = custName;
-    order.customerPhone = custPhone;
-    order.shoeInfo = shoeInfo;
-    order.notes = notes;
-    order.services = selectedServices;
-    order.totalPrice = totalPrice;
-    order.images = uploadedImageUrls;
-    
-    const newStatus = document.getElementById('order-status').value;
-    if (newStatus !== order.status) {
-      order.status = newStatus;
-      if (['completed', 'delivered', 'paid'].includes(newStatus)) {
-        order.completedDate = new Date().toISOString();
-      } else {
-        order.completedDate = null;
+    if (state.currentEditingOrder) {
+      // Edit
+      const order = state.orders.find(o => o.id === state.currentEditingOrder.id);
+      if (!order) {
+        throw new Error(`Không tìm thấy đơn hàng cần sửa: ${state.currentEditingOrder.id}`);
       }
+      order.customerName = custName;
+      order.customerPhone = custPhone;
+      order.shoeInfo = shoeInfo;
+      order.notes = notes;
+      order.services = selectedServices;
+      order.totalPrice = totalPrice;
+      order.images = uploadedImageUrls;
+      
+      const newStatus = document.getElementById('order-status').value;
+      if (newStatus !== order.status) {
+        order.status = newStatus;
+        if (['completed', 'delivered', 'paid'].includes(newStatus)) {
+          order.completedDate = new Date().toISOString();
+        } else {
+          order.completedDate = null;
+        }
+      }
+
+      orderToSync = order;
+      alert(`Cập nhật đơn hàng ${order.id} thành công!`);
+    } else {
+      // Create new
+      const statusVal = document.getElementById('order-status').value || 'pending';
+      const isCompleted = ['completed', 'delivered', 'paid'].includes(statusVal);
+
+      const newOrder = {
+        id: orderId,
+        customerName: custName,
+        customerPhone: custPhone,
+        shoeInfo: shoeInfo,
+        services: selectedServices,
+        totalPrice: totalPrice,
+        status: statusVal,
+        notes: notes,
+        images: uploadedImageUrls,
+        receivedDate: new Date().toISOString(),
+        completedDate: isCompleted ? new Date().toISOString() : null,
+        staffId: state.currentUser ? state.currentUser.id : 'system',
+        staffName: state.currentUser ? state.currentUser.name : 'Nhân viên hệ thống'
+      };
+
+      state.orders.push(newOrder);
+      orderToSync = newOrder;
+      alert(`Tạo đơn hàng ${orderId} thành công!`);
     }
 
-    orderToSync = order;
-    alert(`Cập nhật đơn hàng ${order.id} thành công!`);
-  } else {
-    // Create new
-    const statusVal = document.getElementById('order-status').value || 'pending';
-    const isCompleted = ['completed', 'delivered', 'paid'].includes(statusVal);
+    saveState('pb_orders', state.orders);
 
-    const newOrder = {
-      id: orderId,
-      customerName: custName,
-      customerPhone: custPhone,
-      shoeInfo: shoeInfo,
-      services: selectedServices,
-      totalPrice: totalPrice,
-      status: statusVal,
-      notes: notes,
-      images: uploadedImageUrls,
-      receivedDate: new Date().toISOString(),
-      completedDate: isCompleted ? new Date().toISOString() : null,
-      staffId: state.currentUser.id,
-      staffName: state.currentUser.name
-    };
+    // Sync specific order to Firebase Cloud
+    if (window.db && orderToSync) {
+      window.db.collection('orders').doc(orderToSync.id).set(orderToSync)
+        .then(() => console.log(`Synced order ${orderToSync.id} to Firebase.`))
+        .catch(err => {
+          console.error("Error syncing order to Firebase:", err);
+          alert(`Đồng bộ dữ liệu lên Firebase thất bại (đã lưu tạm trên máy): ${err.message}`);
+        });
+    }
+  } catch (err) {
+    console.error("Lỗi khi xử lý lưu đơn hàng:", err);
+    alert(`Không thể lưu đơn hàng. Chi tiết lỗi: ${err.message}`);
+  } finally {
+    // Clear file references
+    state.tempSelectedFiles.forEach(item => URL.revokeObjectURL(item.previewUrl));
+    state.tempSelectedFiles = [];
+    state.tempExistingImages = [];
 
-    state.orders.push(newOrder);
-    orderToSync = newOrder;
-    alert(`Tạo đơn hàng ${orderId} thành công!`);
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = originalBtnText;
+    if (progressContainer) progressContainer.style.display = 'none';
+
+    closeOrderModal();
+    renderOrders();
   }
-
-  saveState('pb_orders', state.orders);
-
-  // Sync specific order to Firebase Cloud
-  if (window.db && orderToSync) {
-    window.db.collection('orders').doc(orderToSync.id).set(orderToSync)
-      .then(() => console.log(`Synced order ${orderToSync.id} to Firebase.`))
-      .catch(err => console.error("Error syncing order to Firebase:", err));
-  }
-
-  // Clear file references
-  state.tempSelectedFiles.forEach(item => URL.revokeObjectURL(item.previewUrl));
-  state.tempSelectedFiles = [];
-  state.tempExistingImages = [];
-
-  submitBtn.disabled = false;
-  submitBtn.innerHTML = originalBtnText;
-  if (progressContainer) progressContainer.style.display = 'none';
-
-  closeOrderModal();
-  renderOrders();
 }
 
 function deleteOrder(orderId) {
