@@ -20,7 +20,7 @@ async function initData() {
     try {
       console.log("Syncing database with Firebase Firestore Cloud...");
       
-      // 1. Load users
+       // 1. Load users
       const usersSnap = await window.db.collection('users').get();
       if (usersSnap.empty) {
         for (let u of window.DEFAULT_USERS || []) {
@@ -30,7 +30,7 @@ async function initData() {
       } else {
         state.users = usersSnap.docs.map(doc => doc.data());
       }
-      localStorage.setItem('pb_users', JSON.stringify(state.users));
+      saveState('pb_users', state.users);
 
       // 2. Load services
       const servicesSnap = await window.db.collection('services').get();
@@ -42,12 +42,12 @@ async function initData() {
       } else {
         state.services = servicesSnap.docs.map(doc => doc.data());
       }
-      localStorage.setItem('pb_services', JSON.stringify(state.services));
+      saveState('pb_services', state.services);
 
       // 3. Load orders
       const ordersSnap = await window.db.collection('orders').get();
       state.orders = ordersSnap.docs.map(doc => doc.data());
-      localStorage.setItem('pb_orders', JSON.stringify(state.orders));
+      saveState('pb_orders', state.orders);
       
     } catch (error) {
       console.error("Firebase sync failed, falling back to LocalStorage:", error);
