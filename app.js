@@ -1937,7 +1937,7 @@ function deleteTempOrderImage(id) {
   renderOrderFormImagesPreview();
 }
 
-function compressImage(file, maxWidth = 1000, maxHeight = 1000, quality = 0.8) {
+function compressImage(file, maxWidth = 700, maxHeight = 700, quality = 0.5) {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
